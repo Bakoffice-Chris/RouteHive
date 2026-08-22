@@ -8,7 +8,8 @@
     "dev": "node --watch src/server.js",
     "migrate": "knex migrate:latest --knexfile knexfile.js",
     "migrate:rollback": "knex migrate:rollback --knexfile knexfile.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "bootstrap-admin": "node src/bootstrapAdmin.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

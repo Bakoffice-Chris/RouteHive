@@ -11,6 +11,20 @@ Status: CSV import, lead browser, manual + auto-optimized route building, manage
 
 **Compliance note:** phone/email fields are reference-only by design (see `EnrichedContact` in the schema and `src/migrations/20260817000001_init.js` comments). Nothing in this codebase calls, texts, or emails a lead. Do not add a dialer/SMS/email integration without a compliance review first.
 
+## Creating your first admin account
+
+The easiest way: set two environment variables in Railway on the API service, and it creates the account automatically on deploy — no manual API calls needed.
+
+In your API service's **Variables** tab, add:
+- `ADMIN_EMAIL` — the email you'll log in with
+- `ADMIN_PASSWORD` — the password you'll log in with
+- `ADMIN_NAME` (optional) — your name, defaults to "Admin"
+- `TENANT_NAME` (optional) — your company name, defaults to "My Company"
+
+Redeploy. The `Procfile` runs `npm run bootstrap-admin` automatically after migrations and before the server starts — check the deploy logs for a line like `Bootstrap: created tenant "..." and admin account for ...`.
+
+This only ever creates the **first** tenant — safe to leave the variables set permanently and redeploy repeatedly; it'll just say "a tenant already exists, skipping" every time after the first. If you don't set these variables at all, this step is silently skipped and you're back to creating an account through `POST /api/auth/register-tenant` manually.
+
 ## Local setup
 
 ```bash
