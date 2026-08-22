@@ -1,13 +1,24 @@
+// Postgres has gen_random_uuid() built in (since PG13); SQLite (used for
+// local dev) doesn't, so it needs the hex/randomblob expression instead.
+// This lets the same migration file work against both without changes.
+function uuidDefault(knex) {
+  const client = knex.client.config.client;
+  if (client === 'pg' || client === 'postgresql') {
+    return knex.raw('gen_random_uuid()');
+  }
+  return knex.raw('(lower(hex(randomblob(16))))');
+}
+
 exports.up = function (knex) {
   return knex.schema
     .createTable('tenants', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.string('name').notNullable();
       t.string('plan').defaultTo('trial');
       t.timestamps(true, true);
     })
     .createTable('users', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('CASCADE');
       t.string('name').notNullable();
       t.string('email').notNullable();
@@ -19,7 +30,7 @@ exports.up = function (knex) {
       t.unique(['tenant_id', 'email']);
     })
     .createTable('territories', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('CASCADE');
       t.string('name').notNullable();
       t.text('boundary_geojson'); // optional polygon; null = zip-list based
@@ -27,7 +38,7 @@ exports.up = function (knex) {
       t.timestamps(true, true);
     })
     .createTable('data_sources', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('CASCADE');
       t.string('provider_name').notNullable();
       t.enu('type', ['purchase_record', 'enrichment_api', 'csv_import']).notNullable();
@@ -36,7 +47,7 @@ exports.up = function (knex) {
       t.timestamps(true, true);
     })
     .createTable('raw_leads', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('CASCADE');
       t.uuid('source_id').references('id').inTable('data_sources').onDelete('SET NULL');
       t.string('address').notNullable();
@@ -56,7 +67,7 @@ exports.up = function (knex) {
       t.index(['tenant_id', 'zip']);
     })
     .createTable('enriched_contacts', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('raw_lead_id').notNullable().references('id').inTable('raw_leads').onDelete('CASCADE');
       t.string('full_name');
       // Reference-only fields: not wired to any dialer/SMS/email sender by design.
@@ -73,7 +84,7 @@ exports.up = function (knex) {
       t.timestamps(true, true);
     })
     .createTable('leads', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('CASCADE');
       t.uuid('raw_lead_id').notNullable().references('id').inTable('raw_leads').onDelete('CASCADE');
       t.uuid('territory_id').references('id').inTable('territories').onDelete('SET NULL');
@@ -92,7 +103,7 @@ exports.up = function (knex) {
       t.index(['tenant_id', 'disposition']);
     })
     .createTable('routes', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('CASCADE');
       t.string('name').notNullable();
       t.date('date').notNullable();
@@ -104,7 +115,7 @@ exports.up = function (knex) {
       t.index(['tenant_id', 'assigned_rep_id', 'date']);
     })
     .createTable('route_stops', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('route_id').notNullable().references('id').inTable('routes').onDelete('CASCADE');
       t.uuid('lead_id').notNullable().references('id').inTable('leads').onDelete('CASCADE');
       t.integer('sequence_number').notNullable();
@@ -117,7 +128,7 @@ exports.up = function (knex) {
       t.index(['route_id', 'sequence_number']);
     })
     .createTable('audit_logs', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('CASCADE');
       t.uuid('user_id').references('id').inTable('users').onDelete('SET NULL');
       t.string('action').notNullable();

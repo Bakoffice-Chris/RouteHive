@@ -1,3 +1,14 @@
+// Postgres has gen_random_uuid() built in (since PG13); SQLite (used for
+// local dev) doesn't, so it needs the hex/randomblob expression instead.
+// This lets the same migration file work against both without changes.
+function uuidDefault(knex) {
+  const client = knex.client.config.client;
+  if (client === 'pg' || client === 'postgresql') {
+    return knex.raw('gen_random_uuid()');
+  }
+  return knex.raw('(lower(hex(randomblob(16))))');
+}
+
 exports.up = function (knex) {
   return knex.schema
     .alterTable('leads', (t) => {
@@ -8,7 +19,7 @@ exports.up = function (knex) {
       t.boolean('no_further_attempt').notNullable().defaultTo(false);
     })
     .createTable('lead_notes', (t) => {
-      t.uuid('id').primary().defaultTo(knex.raw('(lower(hex(randomblob(16))))'));
+      t.uuid('id').primary().defaultTo(uuidDefault(knex));
       t.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('CASCADE');
       t.uuid('lead_id').notNullable().references('id').inTable('leads').onDelete('CASCADE');
       t.uuid('author_id').references('id').inTable('users').onDelete('SET NULL');
