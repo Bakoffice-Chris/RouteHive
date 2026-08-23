@@ -4,7 +4,7 @@ const { parse } = require('csv-parse/sync');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { syncMaricopaCounty } = require('../jobs/syncMaricopaCounty');
-const { fetchRecentSales } = require('../lib/maricopaSales');
+const { fetchRecentSales, fetchEstimatedValue, fetchPropertyDetails } = require('../lib/maricopaSales');
 const { generateBrief, generateMessageDraft } = require('../lib/busybee');
 
 const router = express.Router();
@@ -218,6 +218,44 @@ router.get('/scouthive/preview', requireRole('admin', 'manager'), async (req, re
     }));
 
     res.json({ search_term, lookback_days: days, count: results.length, results });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// --- Estimated home value for a single parcel (on demand, one at a time -
+// not fetched in bulk during preview, to avoid multiplying the request
+// count against the county's API for a search with many results).
+//
+// IMPORTANT: this is the county's tax-ASSESSED value, not a market
+// estimate like a Zillow Zestimate. Arizona caps the assessed "Limited
+// Property Value" used for tax purposes, so it often understates true
+// market value - it's a free, official proxy, not a replacement for a paid
+// AVM (ATTOM, HouseCanary, etc.) if you need closer-to-market figures.
+router.get('/scouthive/valuation', requireRole('admin', 'manager'), async (req, res) => {
+  const { apn } = req.query;
+  if (!apn) return res.status(400).json({ error: 'apn is required' });
+
+  try {
+    const valuation = await fetchEstimatedValue(apn);
+    res.json({ apn, ...valuation });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// --- Property characteristics for a single parcel: bed/bath count, square
+// footage, year built, and pool status. Same on-demand, one-at-a-time
+// pattern as the valuation endpoint above, and for the same reason (avoid
+// multiplying requests against the county's API for a search with many
+// results).
+router.get('/scouthive/details', requireRole('admin', 'manager'), async (req, res) => {
+  const { apn } = req.query;
+  if (!apn) return res.status(400).json({ error: 'apn is required' });
+
+  try {
+    const details = await fetchPropertyDetails(apn);
+    res.json({ apn, ...details });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

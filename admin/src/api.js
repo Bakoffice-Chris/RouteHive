@@ -100,7 +100,9 @@ export const api = {
     return request(`/api/leads/scouthive/preview?${qs}`);
   },
   scoutHiveImport: (searchTerm, records) =>
-    request('/api/leads/scouthive/import', { method: 'POST', body: JSON.stringify({ search_term: searchTerm, records }) })
+    request('/api/leads/scouthive/import', { method: 'POST', body: JSON.stringify({ search_term: searchTerm, records }) }),
+  scoutHiveValuation: (apn) => request(`/api/leads/scouthive/valuation?apn=${encodeURIComponent(apn)}`),
+  scoutHiveDetails: (apn) => request(`/api/leads/scouthive/details?apn=${encodeURIComponent(apn)}`)
 };
 
 export { getToken };

@@ -11,6 +11,10 @@ export default function ScoutHive() {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState(null);
   const [importResult, setImportResult] = useState(null);
+  const [valuations, setValuations] = useState({}); // keyed by apn/address
+  const [loadingValuation, setLoadingValuation] = useState(null);
+  const [details, setDetails] = useState({}); // keyed by apn/address
+  const [loadingDetails, setLoadingDetails] = useState(null);
 
   async function handleSearch(e) {
     e.preventDefault();
@@ -60,6 +64,32 @@ export default function ScoutHive() {
       setError(err.message);
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function fetchValuation(apn, key) {
+    if (!apn) return;
+    setLoadingValuation(key);
+    try {
+      const result = await api.scoutHiveValuation(apn);
+      setValuations((prev) => ({ ...prev, [key]: result }));
+    } catch (err) {
+      setValuations((prev) => ({ ...prev, [key]: { error: err.message } }));
+    } finally {
+      setLoadingValuation(null);
+    }
+  }
+
+  async function fetchDetails(apn, key) {
+    if (!apn) return;
+    setLoadingDetails(key);
+    try {
+      const result = await api.scoutHiveDetails(apn);
+      setDetails((prev) => ({ ...prev, [key]: result }));
+    } catch (err) {
+      setDetails((prev) => ({ ...prev, [key]: { error: err.message } }));
+    } finally {
+      setLoadingDetails(null);
     }
   }
 
@@ -114,6 +144,10 @@ export default function ScoutHive() {
             </button>
           </div>
 
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+            "Est. value" is Maricopa County's tax-assessed value, not a market estimate like a Zillow Zestimate — Arizona's assessment cap often understates true market value. Fetched one at a time per row to stay within the county's API limits.
+          </div>
+
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             {results.results.length === 0 ? (
               <div className="empty-state">No sales found for this search in the selected window.</div>
@@ -126,12 +160,15 @@ export default function ScoutHive() {
                     <th>Owner</th>
                     <th>Purchase date</th>
                     <th>Sale price</th>
+                    <th>Est. value</th>
+                    <th>Details</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {results.results.map((r) => {
                     const key = r.apn || r.address;
+                    const valuation = valuations[key];
                     return (
                       <tr key={key} className={selected.has(key) ? 'checked' : ''}>
                         <td>
@@ -151,6 +188,56 @@ export default function ScoutHive() {
                         <td>{r.owner_name || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
                         <td className="mono" style={{ fontSize: 12 }}>{r.purchase_date}</td>
                         <td className="mono" style={{ fontSize: 12 }}>{r.sale_price ? `$${Number(r.sale_price).toLocaleString()}` : '—'}</td>
+                        <td className="mono" style={{ fontSize: 12 }}>
+                          {valuation?.estimated_value ? (
+                            <span title={`${valuation.value_type}, tax year ${valuation.valuation_year}`}>
+                              ${Number(valuation.estimated_value).toLocaleString()}
+                            </span>
+                          ) : valuation?.error ? (
+                            <span style={{ color: 'var(--red)' }}>Unavailable</span>
+                          ) : (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ padding: '3px 8px', fontSize: 11 }}
+                              disabled={!r.apn || loadingValuation === key}
+                              onClick={() => fetchValuation(r.apn, key)}
+                              title={!r.apn ? 'No parcel number on file' : ''}
+                            >
+                              {loadingValuation === key ? '…' : 'Get estimate'}
+                            </button>
+                          )}
+                        </td>
+                        <td className="mono" style={{ fontSize: 12 }}>
+                          {(() => {
+                            const d = details[key];
+                            if (d?.error) return <span style={{ color: 'var(--red)' }}>Unavailable</span>;
+                            if (d) {
+                              const bits = [];
+                              if (d.bedrooms) bits.push(`${d.bedrooms}bd`);
+                              if (d.bathrooms) bits.push(`${d.bathrooms}ba`);
+                              if (d.square_footage) bits.push(`${d.square_footage.toLocaleString()} sqft`);
+                              if (d.year_built) bits.push(`Built ${d.year_built}`);
+                              return (
+                                <div>
+                                  <div>{bits.length > 0 ? bits.join(' · ') : 'No details on file'}</div>
+                                  {d.has_pool === true && <span className="tag tag-amber" style={{ padding: '1px 6px', marginTop: 2, display: 'inline-block' }}>Pool</span>}
+                                  {d.has_pool === false && <span className="tag tag-neutral" style={{ padding: '1px 6px', marginTop: 2, display: 'inline-block' }}>No pool</span>}
+                                </div>
+                              );
+                            }
+                            return (
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                style={{ padding: '3px 8px', fontSize: 11 }}
+                                disabled={!r.apn || loadingDetails === key}
+                                onClick={() => fetchDetails(r.apn, key)}
+                                title={!r.apn ? 'No parcel number on file' : ''}
+                              >
+                                {loadingDetails === key ? '…' : 'Get details'}
+                              </button>
+                            );
+                          })()}
+                        </td>
                         <td>
                           {r.already_in_database ? (
                             <span className="tag tag-neutral">Already in database</span>
