@@ -421,6 +421,21 @@ a { color: inherit; text-decoration: none; }
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid rgba(232, 163, 61, 0.3);
+  color: var(--ink);
+}
+
+/* .field is styled by default for the dark login screen (light/translucent
+   text and borders). BusyBee's panel has a light background, so override
+   with full-contrast dark text and a normal light-mode input here. */
+.busybee-panel .field label {
+  color: var(--ink);
+  font-weight: 700;
+}
+.busybee-panel .field input,
+.busybee-panel .field textarea {
+  background: var(--paper-card);
+  border: 1px solid var(--line);
+  color: var(--ink);
 }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

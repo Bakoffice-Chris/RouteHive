@@ -606,4 +606,17 @@ button {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid rgba(232, 163, 61, 0.3);
+  color: var(--ink);
+}
+
+/* Labels and input text inside the panel default to a muted grey app-wide,
+   which washes out against this panel's light amber tint. Force full-
+   contrast dark text here specifically. */
+.busybee-panel .field label {
+  color: var(--ink);
+  font-weight: 700;
+}
+.busybee-panel .field input,
+.busybee-panel .field textarea {
+  color: var(--ink);
 }

@@ -84,6 +84,14 @@ For anything beyond light testing, move this off the synchronous request path �
 
 This only pulls address, owner name, sale date/price, and parcel number — no phone/email. That's a separate enrichment step (still a TODO — see the spec).
 
+**ScoutHive — the review-before-import UI (admin sidebar).** Rather than the direct auto-sync above (which writes straight to the database), ScoutHive lets a manager search, see the results with "New" vs "Already in database" tags, and choose exactly which ones to bring in — nothing gets imported without an explicit selection.
+
+- `GET /api/leads/scouthive/preview?search_term=85028&lookback_days=90` — read-only, makes no database writes. Flags each result as `already_in_database` by checking both address (case/whitespace-insensitive) and parcel number (APN) against your existing leads.
+- `POST /api/leads/scouthive/import` — takes the manager's selected subset and creates them as real leads, re-checking for duplicates server-side (never trusts the client's `already_in_database` flag, since time may have passed since the preview was fetched).
+- Both share the same field-extraction logic as the direct-sync path (`src/lib/maricopaSales.js`), refactored out during this build so there's exactly one place to fix if the county's actual field names ever turn out to differ from what's assumed — same untested-against-live-data caveat as above applies here too.
+- Tested end to end against Postgres: dedup by both address and APN verified correct (including a case-different address match), re-importing the same records correctly skips them as duplicates, and the failure path (no token set) returns a clean error instead of crashing — same as the direct-sync endpoint.
+- Defaults to a 90-day lookback window, editable per search.
+
 ## Team management
 
 - `PATCH /api/users/:id` (admin/manager) — edit name, email, role, active status, and optionally reset a password. Send only the fields you're changing.
@@ -111,7 +119,7 @@ Opt-in, foreground-only GPS sharing — a rep toggles it on from their own app; 
 
 ## Editing homeowner names, and filtering leads
 
-- `PATCH /api/leads/:id/name` — edit the homeowner name on a lead. Works whether or not the lead has ever been through enrichment: if there's no `enriched_contacts` row yet, one is created with just the name; if one exists, it's updated in place (no duplicates). Same rep-scoping rules as flags/notes.
+- `PATCH /api/leads/:id/contact` — edit contact info on a lead: **name, co-owner name, email, phone.** Same upsert-safe behavior as before (creates an `enriched_contacts` row if the lead was never enriched, updates in place if one exists — no duplicates). Send only the fields you're changing; send an empty string to clear a field. Replaces the old name-only `/name` endpoint entirely.
 - `GET /api/leads` now accepts `state`, `visited`, `has_solar`, `no_further_attempt` as additional filters, on top of the existing `territory_id`, `disposition`, `status`, `unassigned`. `state` matches case-insensitively; the three flags are `true`/omit (checking a box narrows to only that flag, unchecked shows both).
 - Admin UI: name is editable inline from the contact card (click "Edit" next to the name); the Leads page toolbar has a state text filter plus the three checkboxes.
 - Employee UI: name is editable the same way from the stop detail screen's contact card. The route view screen has the same state filter + three checkboxes, filtering the current route's stop list client-side (no extra API calls needed since a route's stops are already fully loaded).

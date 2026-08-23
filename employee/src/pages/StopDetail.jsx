@@ -23,9 +23,9 @@ export default function StopDetail() {
   const [savingFlag, setSavingFlag] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
-  const [editingName, setEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState('');
-  const [savingName, setSavingName] = useState(false);
+  const [editingContact, setEditingContact] = useState(false);
+  const [contactDraft, setContactDraft] = useState({ full_name: '', co_owner_name: '', email: '', phone: '' });
+  const [savingContact, setSavingContact] = useState(false);
 
   async function load() {
     setError(null);
@@ -103,24 +103,28 @@ export default function StopDetail() {
     }
   }
 
-  function startEditingName() {
-    setNameDraft(lead.full_name || '');
-    setEditingName(true);
+  function startEditingContact() {
+    setContactDraft({
+      full_name: lead.full_name || '',
+      co_owner_name: lead.co_owner_name || '',
+      email: lead.email || '',
+      phone: lead.phone || ''
+    });
+    setEditingContact(true);
   }
 
-  async function saveName(e) {
+  async function saveContact(e) {
     e.preventDefault();
-    if (!nameDraft.trim()) return;
-    setSavingName(true);
+    setSavingContact(true);
     setError(null);
     try {
-      await api.updateLeadName(lead.id, nameDraft.trim());
-      setLead((prev) => ({ ...prev, full_name: nameDraft.trim() }));
-      setEditingName(false);
+      const updated = await api.updateLeadContact(lead.id, contactDraft);
+      setLead((prev) => ({ ...prev, ...updated }));
+      setEditingContact(false);
     } catch (err) {
       setError(err.message);
     } finally {
-      setSavingName(false);
+      setSavingContact(false);
     }
   }
 
@@ -137,31 +141,67 @@ export default function StopDetail() {
             <div className="detail-header">
               <div className="detail-address">{stop.address}</div>
               <div className="detail-sub">{stop.city}, {stop.state} {stop.zip}</div>
-              {editingName ? (
-                <form onSubmit={saveName} style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <input
-                    autoFocus
-                    value={nameDraft}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    placeholder="Homeowner name"
-                    style={{ flex: 1, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 4, fontSize: 15 }}
-                  />
-                  <button className="btn btn-amber" type="submit" disabled={savingName || !nameDraft.trim()} style={{ width: 'auto', padding: '0 14px' }}>
-                    {savingName ? '…' : 'Save'}
-                  </button>
+              {editingContact ? (
+                <form onSubmit={saveContact} style={{ marginTop: 8 }}>
+                  <div className="field">
+                    <label>Name</label>
+                    <input
+                      autoFocus
+                      value={contactDraft.full_name}
+                      onChange={(e) => setContactDraft({ ...contactDraft, full_name: e.target.value })}
+                      placeholder="Homeowner name"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Co-owner name</label>
+                    <input
+                      value={contactDraft.co_owner_name}
+                      onChange={(e) => setContactDraft({ ...contactDraft, co_owner_name: e.target.value })}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Email</label>
+                    <input
+                      type="email"
+                      value={contactDraft.email}
+                      onChange={(e) => setContactDraft({ ...contactDraft, email: e.target.value })}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Phone</label>
+                    <input
+                      type="tel"
+                      value={contactDraft.phone}
+                      onChange={(e) => setContactDraft({ ...contactDraft, phone: e.target.value })}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="btn-row">
+                    <button className="btn btn-amber" type="submit" disabled={savingContact}>
+                      {savingContact ? 'Saving…' : 'Save'}
+                    </button>
+                    <button type="button" className="btn btn-outline" onClick={() => setEditingContact(false)} disabled={savingContact}>
+                      Cancel
+                    </button>
+                  </div>
                 </form>
               ) : (
-                <div className="detail-contact" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  {lead.full_name ? <span>{lead.full_name}</span> : <span style={{ color: 'var(--text-muted)' }}>No name on file</span>}
-                  <button className="btn btn-outline" onClick={startEditingName} style={{ width: 'auto', minHeight: 'auto', padding: '3px 10px', fontSize: 12 }}>
-                    Edit
-                  </button>
-                </div>
-              )}
-              {(lead.phone || lead.email) && (
-                <div className="detail-contact">
-                  {lead.phone && <div>{lead.phone}</div>}
-                  {lead.email && <div>{lead.email}</div>}
+                <div className="detail-contact" style={{ marginTop: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    {lead.full_name ? <span>{lead.full_name}</span> : <span style={{ color: 'var(--text-muted)' }}>No name on file</span>}
+                    <button className="btn btn-outline" onClick={startEditingContact} style={{ width: 'auto', minHeight: 'auto', padding: '3px 10px', fontSize: 12 }}>
+                      Edit
+                    </button>
+                  </div>
+                  {lead.co_owner_name && <div style={{ marginTop: 4 }}>Co-owner: {lead.co_owner_name}</div>}
+                  {(lead.phone || lead.email) && (
+                    <div style={{ marginTop: 4 }}>
+                      {lead.phone && <div>{lead.phone}</div>}
+                      {lead.email && <div>{lead.email}</div>}
+                    </div>
+                  )}
                 </div>
               )}
               {stop.lat != null && stop.lng != null && (

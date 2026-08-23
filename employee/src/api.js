@@ -31,7 +31,7 @@ export const api = {
   getLeadBrief: (id) => request(`/api/leads/${id}/brief`),
   getLeadDraft: (id, channel) => request(`/api/leads/${id}/draft?channel=${channel}`),
   updateLeadFlags: (id, flags) => request(`/api/leads/${id}/flags`, { method: 'PATCH', body: JSON.stringify(flags) }),
-  updateLeadName: (id, full_name) => request(`/api/leads/${id}/name`, { method: 'PATCH', body: JSON.stringify({ full_name }) }),
+  updateLeadContact: (id, payload) => request(`/api/leads/${id}/contact`, { method: 'PATCH', body: JSON.stringify(payload) }),
   addLeadNote: (id, body) => request(`/api/leads/${id}/notes`, { method: 'POST', body: JSON.stringify({ body }) }),
 
   updateMyLocation: (lat, lng) =>

@@ -20,6 +20,7 @@ function buildLeadContext(lead) {
   lines.push(`Address: ${lead.address}, ${lead.city}, ${lead.state} ${lead.zip}`);
   const ownerName = lead.full_name || lead.owner_name_raw;
   if (ownerName) lines.push(`Homeowner: ${ownerName}`);
+  if (lead.co_owner_name) lines.push(`Co-owner: ${lead.co_owner_name}`);
   if (lead.purchase_date) lines.push(`Home purchased: ${lead.purchase_date}${lead.sale_price ? ` for $${lead.sale_price}` : ''}`);
   lines.push(`Current disposition: ${lead.disposition}`);
   lines.push(`Visited before: ${lead.visited ? 'yes' : 'no'}`);

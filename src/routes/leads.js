@@ -4,6 +4,7 @@ const { parse } = require('csv-parse/sync');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { syncMaricopaCounty } = require('../jobs/syncMaricopaCounty');
+const { fetchRecentSales } = require('../lib/maricopaSales');
 const { generateBrief, generateMessageDraft } = require('../lib/busybee');
 
 const router = express.Router();
@@ -174,6 +175,142 @@ router.post('/sync-maricopa', requireRole('admin', 'manager'), async (req, res) 
   }
 });
 
+// ===== ScoutHive: review-before-import Maricopa County lead sourcing =====
+//
+// Unlike /sync-maricopa above (which writes straight to the database), this
+// pair of endpoints lets a manager preview recent county sale records,
+// see which ones are already in the lead database, and choose exactly
+// which ones to bring in.
+
+// --- Preview recent sales for a search term. Read-only - makes no database
+// writes. Flags each result as already_in_database if a lead with a
+// matching address (or matching APN, if one's on file) already exists for
+// this tenant, so ScoutHive can show which ones are genuinely new.
+router.get('/scouthive/preview', requireRole('admin', 'manager'), async (req, res) => {
+  const { search_term, lookback_days } = req.query;
+  if (!search_term) return res.status(400).json({ error: 'search_term is required (zip code, subdivision, or area)' });
+
+  const days = lookback_days ? parseInt(lookback_days, 10) : 90;
+
+  try {
+    const sales = await fetchRecentSales(search_term, days);
+
+    const existingAddresses = new Set(
+      (
+        await db('raw_leads')
+          .where('tenant_id', req.user.tenant_id)
+          .select('address')
+      ).map((r) => r.address.trim().toLowerCase())
+    );
+    const existingApns = new Set(
+      (
+        await db('raw_leads')
+          .where('tenant_id', req.user.tenant_id)
+          .whereNotNull('external_ref')
+          .select('external_ref')
+      ).map((r) => r.external_ref)
+    );
+
+    const results = sales.map((sale) => ({
+      ...sale,
+      already_in_database:
+        existingAddresses.has(sale.address.trim().toLowerCase()) || (sale.apn && existingApns.has(sale.apn))
+    }));
+
+    res.json({ search_term, lookback_days: days, count: results.length, results });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// --- Import a manager-selected subset of previewed sales into the lead
+// database. Body: { search_term, records: [...] } where records are the
+// same objects returned by the preview endpoint above (or at minimum
+// {apn, address, city, state, zip, purchase_date, sale_price, owner_name}).
+// Re-checks for duplicates server-side rather than trusting the client's
+// already_in_database flag, since time may have passed since the preview.
+router.post('/scouthive/import', requireRole('admin', 'manager'), async (req, res) => {
+  const { search_term, records } = req.body;
+  if (!search_term) return res.status(400).json({ error: 'search_term is required' });
+  if (!Array.isArray(records) || records.length === 0) {
+    return res.status(400).json({ error: 'records must be a non-empty array' });
+  }
+
+  const source = await (async () => {
+    const existing = await db('data_sources')
+      .where({ tenant_id: req.user.tenant_id, provider_name: `Maricopa County Assessor: ${search_term}` })
+      .first();
+    if (existing) return existing;
+    const [created] = await db('data_sources')
+      .insert({
+        tenant_id: req.user.tenant_id,
+        provider_name: `Maricopa County Assessor: ${search_term}`,
+        type: 'purchase_record',
+        credentials_ref: 'MCASSESSOR_API_TOKEN'
+      })
+      .returning('*');
+    return created;
+  })();
+
+  let imported = 0;
+  let skippedDuplicate = 0;
+
+  for (const record of records) {
+    if (!record.address) continue;
+
+    const dupQuery = db('raw_leads').where('tenant_id', req.user.tenant_id);
+    if (record.apn) {
+      dupQuery.andWhere(function () {
+        this.where('external_ref', record.apn).orWhereRaw('LOWER(TRIM(address)) = LOWER(TRIM(?))', [record.address]);
+      });
+    } else {
+      dupQuery.andWhereRaw('LOWER(TRIM(address)) = LOWER(TRIM(?))', [record.address]);
+    }
+    const dup = await dupQuery.first();
+    if (dup) {
+      skippedDuplicate++;
+      continue;
+    }
+
+    const [rawLead] = await db('raw_leads')
+      .insert({
+        tenant_id: req.user.tenant_id,
+        source_id: source.id,
+        external_ref: record.apn || null,
+        address: record.address,
+        city: record.city || null,
+        state: record.state || null,
+        zip: record.zip || null,
+        purchase_date: record.purchase_date || null,
+        sale_price: record.sale_price || null,
+        owner_name_raw: record.owner_name || null,
+        status: 'new'
+      })
+      .returning('*');
+
+    await db('leads').insert({
+      tenant_id: req.user.tenant_id,
+      raw_lead_id: rawLead.id,
+      disposition: 'not_contacted'
+    });
+
+    imported++;
+  }
+
+  await db('data_sources').where({ id: source.id }).update({ last_synced_at: db.fn.now() });
+
+  await db('audit_logs').insert({
+    tenant_id: req.user.tenant_id,
+    user_id: req.user.id,
+    action: 'scouthive_import',
+    entity_type: 'data_source',
+    entity_id: source.id,
+    details: `Imported ${imported} leads via ScoutHive, ${skippedDuplicate} skipped as duplicates`
+  });
+
+  res.status(201).json({ imported, skipped_duplicate: skippedDuplicate });
+});
+
 // --- Browse leads (joins raw_leads + enriched_contacts for display)
 router.get('/', async (req, res) => {
   const { territory_id, disposition, status, unassigned, state, visited, has_solar, no_further_attempt } = req.query;
@@ -308,6 +445,7 @@ async function getLeadDetail(req, leadId) {
       'raw_leads.owner_name_raw as owner_name_raw',
       'raw_leads.status as enrichment_status',
       'enriched_contacts.full_name as full_name',
+      'enriched_contacts.co_owner_name as co_owner_name',
       'enriched_contacts.phone as phone',
       'enriched_contacts.email as email'
     )
@@ -436,35 +574,58 @@ router.patch('/:id/flags', async (req, res) => {
   });
 });
 
-// --- Edit the homeowner name on a lead's contact card. This works whether
-// or not the lead has ever been through enrichment - if there's no
-// enriched_contacts row yet (common for CSV-imported or un-enriched leads),
-// one is created with just the name set; if a row already exists, it's
-// updated in place rather than creating a duplicate.
-router.patch('/:id/name', async (req, res) => {
+// --- Edit contact info on a lead: primary name, co-owner name, email,
+// phone. Works whether or not the lead has ever been through enrichment -
+// if there's no enriched_contacts row yet (common for CSV-imported or
+// un-enriched leads), one is created; if a row already exists, it's
+// updated in place rather than creating a duplicate. Send only the fields
+// you're changing - everything is optional per-request, but at least one
+// field is required.
+router.patch('/:id/contact', async (req, res) => {
   const lead = await assertLeadAccess(req, res, req.params.id);
   if (!lead) return;
 
-  const { full_name } = req.body;
-  if (typeof full_name !== 'string' || !full_name.trim()) {
-    return res.status(400).json({ error: 'full_name is required' });
+  const { full_name, co_owner_name, email, phone } = req.body;
+  const updates = {};
+
+  if (full_name !== undefined) {
+    const trimmed = String(full_name).trim();
+    if (!trimmed) return res.status(400).json({ error: 'full_name cannot be blank' });
+    updates.full_name = trimmed;
   }
-  const trimmedName = full_name.trim();
+  if (co_owner_name !== undefined) {
+    updates.co_owner_name = co_owner_name ? String(co_owner_name).trim() : null;
+  }
+  if (email !== undefined) {
+    updates.email = email ? String(email).trim() : null;
+  }
+  if (phone !== undefined) {
+    updates.phone = phone ? String(phone).trim() : null;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'Provide at least one of: full_name, co_owner_name, email, phone' });
+  }
 
   const existing = await db('enriched_contacts').where({ raw_lead_id: lead.raw_lead_id }).first();
 
   if (existing) {
-    await db('enriched_contacts').where({ id: existing.id }).update({ full_name: trimmedName });
+    await db('enriched_contacts').where({ id: existing.id }).update(updates);
   } else {
     await db('enriched_contacts').insert({
       raw_lead_id: lead.raw_lead_id,
-      full_name: trimmedName,
       enrichment_provider: 'manual_edit',
-      enriched_at: db.fn.now()
+      enriched_at: db.fn.now(),
+      ...updates
     });
   }
 
-  res.json({ id: lead.id, full_name: trimmedName });
+  const updated = await db('enriched_contacts')
+    .where({ raw_lead_id: lead.raw_lead_id })
+    .select('full_name', 'co_owner_name', 'email', 'phone')
+    .first();
+
+  res.json({ id: lead.id, ...updated });
 });
 
 // --- Add a dated note to a lead's contact card. Notes are never edited or
