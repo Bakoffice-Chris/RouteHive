@@ -29,6 +29,16 @@ export const api = {
 
   getLead: (id) => request(`/api/leads/${id}`),
   getLeadBrief: (id) => request(`/api/leads/${id}/brief`),
+  getLeadEstimatedValue: (id) => request(`/api/leads/${id}/estimated-value`),
+  getLeadPropertyDetails: (id) => request(`/api/leads/${id}/property-details`),
+
+  getAppointments: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/api/appointments${qs ? `?${qs}` : ''}`);
+  },
+  createAppointment: (payload) => request('/api/appointments', { method: 'POST', body: JSON.stringify(payload) }),
+  updateAppointment: (id, payload) => request(`/api/appointments/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  getAppointmentReminder: (id, type, channel) => request(`/api/appointments/${id}/reminder?type=${type}&channel=${channel}`),
   getLeadDraft: (id, channel) => request(`/api/leads/${id}/draft?channel=${channel}`),
   updateLeadFlags: (id, flags) => request(`/api/leads/${id}/flags`, { method: 'PATCH', body: JSON.stringify(flags) }),
   updateLeadContact: (id, payload) => request(`/api/leads/${id}/contact`, { method: 'PATCH', body: JSON.stringify(payload) }),

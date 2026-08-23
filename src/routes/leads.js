@@ -6,6 +6,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { syncMaricopaCounty } = require('../jobs/syncMaricopaCounty');
 const { fetchRecentSales, fetchEstimatedValue, fetchPropertyDetails } = require('../lib/maricopaSales');
 const { generateBrief, generateMessageDraft } = require('../lib/busybee');
+const { computeSolarFitScore } = require('../lib/solarFit');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -322,7 +323,23 @@ router.post('/scouthive/import', requireRole('admin', 'manager'), async (req, re
         purchase_date: record.purchase_date || null,
         sale_price: record.sale_price || null,
         owner_name_raw: record.owner_name || null,
-        status: 'new'
+        status: 'new',
+        // If the manager already fetched a valuation/property-details
+        // lookup for this row during preview, carry it straight through
+        // rather than losing it - see the estimated-value/property-details
+        // endpoints below for the same fields fetched on demand for leads
+        // that come in without this already attached.
+        estimated_value: record.estimated_value || null,
+        valuation_year: record.valuation_year || null,
+        value_type: record.value_type || null,
+        bedrooms: record.bedrooms || null,
+        bathrooms: record.bathrooms || null,
+        square_footage: record.square_footage || null,
+        year_built: record.year_built || null,
+        lot_size: record.lot_size || null,
+        has_pool: record.has_pool === true || record.has_pool === false ? record.has_pool : null,
+        property_intel_fetched_at: record.estimated_value || record.bedrooms || record.has_pool !== undefined ? db.fn.now() : null
+
       })
       .returning('*');
 
@@ -351,7 +368,7 @@ router.post('/scouthive/import', requireRole('admin', 'manager'), async (req, re
 
 // --- Browse leads (joins raw_leads + enriched_contacts for display)
 router.get('/', async (req, res) => {
-  const { territory_id, disposition, status, unassigned, state, visited, has_solar, no_further_attempt } = req.query;
+  const { territory_id, disposition, status, unassigned, state, visited, has_solar, no_further_attempt, sort } = req.query;
 
   let query = db('leads')
     .where('leads.tenant_id', req.user.tenant_id)
@@ -373,6 +390,10 @@ router.get('/', async (req, res) => {
       'raw_leads.lng',
       'raw_leads.purchase_date',
       'raw_leads.status as enrichment_status',
+      'raw_leads.estimated_value',
+      'raw_leads.square_footage',
+      'raw_leads.year_built',
+      'raw_leads.has_pool',
       'enriched_contacts.full_name',
       'enriched_contacts.phone',
       'enriched_contacts.email'
@@ -391,7 +412,30 @@ router.get('/', async (req, res) => {
     });
   }
 
-  const leads = await query.orderBy('raw_leads.purchase_date', 'desc');
+  let leads = await query.orderBy('raw_leads.purchase_date', 'desc');
+
+  // Solar Fit Score is computed here (not stored) since it's cheap and
+  // depends on the has_solar/no_further_attempt flags, which can change
+  // independently of the underlying property data - computing on read
+  // keeps it always current rather than needing to be recalculated and
+  // re-saved every time a flag changes.
+  leads = leads.map((lead) => ({
+    ...lead,
+    solar_fit: computeSolarFitScore({
+      has_pool: lead.has_pool,
+      estimated_value: lead.estimated_value,
+      square_footage: lead.square_footage,
+      year_built: lead.year_built,
+      purchase_date: lead.purchase_date,
+      has_solar: lead.has_solar,
+      no_further_attempt: lead.no_further_attempt
+    })
+  }));
+
+  if (sort === 'solar_fit') {
+    leads.sort((a, b) => b.solar_fit.score - a.solar_fit.score);
+  }
+
   res.json(leads);
 });
 
@@ -482,6 +526,17 @@ async function getLeadDetail(req, leadId) {
       'raw_leads.sale_price as sale_price',
       'raw_leads.owner_name_raw as owner_name_raw',
       'raw_leads.status as enrichment_status',
+      'raw_leads.external_ref as apn',
+      'raw_leads.estimated_value as estimated_value',
+      'raw_leads.valuation_year as valuation_year',
+      'raw_leads.value_type as value_type',
+      'raw_leads.bedrooms as bedrooms',
+      'raw_leads.bathrooms as bathrooms',
+      'raw_leads.square_footage as square_footage',
+      'raw_leads.year_built as year_built',
+      'raw_leads.lot_size as lot_size',
+      'raw_leads.has_pool as has_pool',
+      'raw_leads.property_intel_fetched_at as property_intel_fetched_at',
       'enriched_contacts.full_name as full_name',
       'enriched_contacts.co_owner_name as co_owner_name',
       'enriched_contacts.phone as phone',
@@ -507,6 +562,15 @@ async function getLeadDetail(req, leadId) {
     visited: !!lead.visited,
     has_solar: !!lead.has_solar,
     no_further_attempt: !!lead.no_further_attempt,
+    solar_fit: computeSolarFitScore({
+      has_pool: lead.has_pool,
+      estimated_value: lead.estimated_value,
+      square_footage: lead.square_footage,
+      year_built: lead.year_built,
+      purchase_date: lead.purchase_date,
+      has_solar: lead.has_solar,
+      no_further_attempt: lead.no_further_attempt
+    }),
     notes
   };
 }
@@ -585,6 +649,65 @@ async function assertLeadAccess(req, res, leadId) {
   }
   return lead;
 }
+
+// --- County intel lookups, scoped to a specific lead (not admin/manager-
+// only like the ScoutHive search endpoints - any rep can look this up for
+// a lead on their own assigned route). Resolves the parcel number from the
+// lead's own record (raw_leads.external_ref) rather than requiring it as a
+// parameter, and persists the result so it's there next time without
+// re-fetching. Requires the lead to have a parcel number on file, which
+// only leads sourced through Maricopa County (auto-sync or ScoutHive) will
+// have - a CSV-imported lead won't, and there's no way to look one up from
+// just an address through this API.
+router.get('/:id/estimated-value', async (req, res) => {
+  const lead = await assertLeadAccess(req, res, req.params.id);
+  if (!lead) return;
+
+  const rawLead = await db('raw_leads').where({ id: lead.raw_lead_id }).first();
+  if (!rawLead.external_ref) {
+    return res.status(400).json({ error: "This lead has no parcel number on file - can't look up county data for it." });
+  }
+
+  try {
+    const valuation = await fetchEstimatedValue(rawLead.external_ref);
+    await db('raw_leads').where({ id: rawLead.id }).update({
+      estimated_value: valuation.estimated_value,
+      valuation_year: valuation.valuation_year,
+      value_type: valuation.value_type,
+      property_intel_fetched_at: db.fn.now()
+    });
+    res.json(valuation);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+router.get('/:id/property-details', async (req, res) => {
+  const lead = await assertLeadAccess(req, res, req.params.id);
+  if (!lead) return;
+
+  const rawLead = await db('raw_leads').where({ id: lead.raw_lead_id }).first();
+  if (!rawLead.external_ref) {
+    return res.status(400).json({ error: "This lead has no parcel number on file - can't look up county data for it." });
+  }
+
+  try {
+    const details = await fetchPropertyDetails(rawLead.external_ref);
+    await db('raw_leads').where({ id: rawLead.id }).update({
+      bedrooms: details.bedrooms,
+      bathrooms: details.bathrooms,
+      square_footage: details.square_footage,
+      year_built: details.year_built,
+      lot_size: details.lot_size,
+      has_pool: details.has_pool,
+      property_intel_fetched_at: db.fn.now()
+    });
+    res.json(details);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 
 // --- The "abbreviated contact page" flags: visited / has_solar / no_further_attempt.
 // Partial update - send only the fields you're changing.

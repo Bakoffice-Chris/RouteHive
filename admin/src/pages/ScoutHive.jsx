@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Layout from '../components/Layout.jsx';
 import { api } from '../api.js';
+import { computeSolarFitScore } from '../lib/solarFit.js';
 
 export default function ScoutHive() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -15,6 +16,7 @@ export default function ScoutHive() {
   const [loadingValuation, setLoadingValuation] = useState(null);
   const [details, setDetails] = useState({}); // keyed by apn/address
   const [loadingDetails, setLoadingDetails] = useState(null);
+  const [sortBySolarFit, setSortBySolarFit] = useState(false);
 
   async function handleSearch(e) {
     e.preventDefault();
@@ -54,7 +56,21 @@ export default function ScoutHive() {
     setImporting(true);
     setError(null);
     try {
-      const chosen = results.results.filter((r) => selected.has(r.apn || r.address));
+      const chosen = results.results
+        .filter((r) => selected.has(r.apn || r.address))
+        .map((r) => {
+          const key = r.apn || r.address;
+          const valuation = valuations[key];
+          const detail = details[key];
+          return {
+            ...r,
+            // Merge in anything already fetched during preview so it isn't
+            // thrown away on import - errors (failed lookups) are skipped,
+            // not passed through as fake data.
+            ...(valuation && !valuation.error ? valuation : {}),
+            ...(detail && !detail.error ? detail : {})
+          };
+        });
       const result = await api.scoutHiveImport(results.search_term, chosen);
       setImportResult(result);
       const refreshed = await api.scoutHivePreview(results.search_term, lookbackDays);
@@ -92,6 +108,24 @@ export default function ScoutHive() {
       setLoadingDetails(null);
     }
   }
+
+  function scoreRow(r) {
+    const v = valuations[r.apn || r.address];
+    const d = details[r.apn || r.address];
+    return computeSolarFitScore({
+      has_pool: d?.has_pool,
+      estimated_value: v?.estimated_value,
+      square_footage: d?.square_footage,
+      year_built: d?.year_built,
+      purchase_date: r.purchase_date
+    });
+  }
+
+  const displayedResults = results
+    ? sortBySolarFit
+      ? [...results.results].sort((a, b) => scoreRow(b).score - scoreRow(a).score)
+      : results.results
+    : [];
 
   return (
     <Layout>
@@ -139,6 +173,12 @@ export default function ScoutHive() {
               {results.count} sale{results.count === 1 ? '' : 's'} found in the last {results.lookback_days} days
             </span>
             <button className="btn btn-ghost btn-sm" onClick={selectAllNew}>Select all new</button>
+            <button
+              className={`btn btn-sm ${sortBySolarFit ? 'btn-amber' : 'btn-ghost'}`}
+              onClick={() => setSortBySolarFit((v) => !v)}
+            >
+              {sortBySolarFit ? '✓ Best fit first' : 'Sort by solar fit'}
+            </button>
             <button className="btn btn-amber" disabled={selected.size === 0 || importing} onClick={handleImport}>
               {importing ? 'Importing…' : `Import selected (${selected.size})`}
             </button>
@@ -162,11 +202,12 @@ export default function ScoutHive() {
                     <th>Sale price</th>
                     <th>Est. value</th>
                     <th>Details</th>
+                    <th>Solar fit</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {results.results.map((r) => {
+                  {displayedResults.map((r) => {
                     const key = r.apn || r.address;
                     const valuation = valuations[key];
                     return (
@@ -237,6 +278,11 @@ export default function ScoutHive() {
                               </button>
                             );
                           })()}
+                        </td>
+                        <td title={scoreRow(r).reasons.join(' · ')}>
+                          <span className={`tag ${scoreRow(r).score >= 50 ? 'tag-green' : scoreRow(r).score >= 25 ? 'tag-amber' : 'tag-neutral'}`}>
+                            {scoreRow(r).score}/100
+                          </span>
                         </td>
                         <td>
                           {r.already_in_database ? (

@@ -23,6 +23,7 @@ export default function Leads() {
   const [importingNotes, setImportingNotes] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [dispositionFilter, setDispositionFilter] = useState('');
+  const [sortBySolarFit, setSortBySolarFit] = useState(false);
   const [stateFilter, setStateFilter] = useState('');
   const [stateFilterDebounced, setStateFilterDebounced] = useState('');
   const [visitedFilter, setVisitedFilter] = useState(false);
@@ -41,6 +42,7 @@ export default function Leads() {
       if (visitedFilter) params.visited = 'true';
       if (hasSolarFilter) params.has_solar = 'true';
       if (noFurtherAttemptFilter) params.no_further_attempt = 'true';
+      if (sortBySolarFit) params.sort = 'solar_fit';
       const data = await api.getLeads(params);
       setLeads(data);
     } catch (err) {
@@ -58,7 +60,7 @@ export default function Leads() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dispositionFilter, stateFilterDebounced, visitedFilter, hasSolarFilter, noFurtherAttemptFilter]);
+  }, [dispositionFilter, stateFilterDebounced, visitedFilter, hasSolarFilter, noFurtherAttemptFilter, sortBySolarFit]);
 
   function toggleSelect(id) {
     setSelected((prev) => {
@@ -193,6 +195,13 @@ export default function Leads() {
             <input type="checkbox" checked={noFurtherAttemptFilter} onChange={(e) => setNoFurtherAttemptFilter(e.target.checked)} />
             No further attempt
           </label>
+          <button
+            className={`btn btn-sm ${sortBySolarFit ? 'btn-amber' : 'btn-ghost'}`}
+            onClick={() => setSortBySolarFit((v) => !v)}
+            title="Sort by likely solar fit, using pool/value/size/purchase-recency signals"
+          >
+            {sortBySolarFit ? '✓ Best solar prospects first' : 'Sort by solar fit'}
+          </button>
         </div>
       </div>
 
@@ -213,6 +222,7 @@ export default function Leads() {
                 <th>Contact</th>
                 <th>Purchase date</th>
                 <th>Flags</th>
+                <th>Solar fit</th>
                 <th>Disposition</th>
               </tr>
             </thead>
@@ -250,6 +260,15 @@ export default function Leads() {
                         {lead.has_solar && <span className="tag tag-amber" style={{ padding: '1px 6px' }}>Solar</span>}
                         {lead.no_further_attempt && <span className="tag tag-red" style={{ padding: '1px 6px' }}>Stop</span>}
                       </div>
+                    </td>
+                    <td onClick={() => setOpenLeadId(lead.id)} title={lead.solar_fit?.reasons?.join(' · ')}>
+                      {lead.solar_fit?.excluded ? (
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>
+                      ) : (
+                        <span className={`tag ${lead.solar_fit?.score >= 50 ? 'tag-green' : lead.solar_fit?.score >= 25 ? 'tag-amber' : 'tag-neutral'}`}>
+                          {lead.solar_fit?.score ?? 0}/100
+                        </span>
+                      )}
                     </td>
                     <td onClick={() => setOpenLeadId(lead.id)}>
                       <span className={`tag ${disp.tag}`}>{disp.label}</span>

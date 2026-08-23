@@ -98,6 +98,14 @@ This only pulls address, owner name, sale date/price, and parcel number — no p
 **Property details (bed/bath, square footage, year built, pool)** — `GET /api/leads/scouthive/details?apn=...`, same on-demand per-row pattern as the valuation lookup, via a "Get details" button per row. Sourced from the county's own parcel-details data, which its public documentation confirms includes pool status as one of the tracked "basic improvement components." `has_pool` is `true`/`false` when the county has that field on file, and `null` (shown as "no details on file," not lumped in with "no pool") when it doesn't — those are meaningfully different and the code keeps them apart rather than treating an absent field as a negative answer.
 - Verified `extractPropertyFeatures` against six mocked response shapes: boolean pool flag, string "Y"/"N", numeric pool-size field, no pool field present at all, and a response wrapped in a nested `Parcel` key — all extracted correctly, including the null-vs-false distinction above.
 
+**This data now shows up in both the admin and employee apps, on any lead — not just from within ScoutHive.** Two lead-scoped endpoints, rep-accessible (unlike the ScoutHive search endpoints, which are admin/manager only):
+- `GET /api/leads/:id/estimated-value`
+- `GET /api/leads/:id/property-details`
+
+Both resolve the parcel number from the lead's own record and **persist the result** — this closes a real gap: previously, anything fetched in ScoutHive only lived in the browser's temporary state and vanished the moment you left the page, even after importing the lead. Now it's saved to `raw_leads` and shows up in the contact card on both apps, with a "Look up" button if it hasn't been fetched yet. Only leads that came from Maricopa County (ScoutHive or the auto-sync) have a parcel number to look up against — a CSV-imported lead won't, and the UI says so plainly rather than showing a broken button.
+
+Verified end to end against Postgres: a ScoutHive import with already-fetched valuation/details data correctly persists it (previously would've been silently discarded); a lead with no parcel number gets a clean 400 instead of attempting a lookup; a rep is correctly blocked (403) from looking this up for a lead not on their assigned route; and both endpoints fail cleanly (not a crash) when no API token is configured.
+
 ## Team management
 
 - `PATCH /api/users/:id` (admin/manager) — edit name, email, role, active status, and optionally reset a password. Send only the fields you're changing.
@@ -181,6 +189,64 @@ Two ways to build a route now, beyond manually picking stops and order:
 - Zip centroids are a small static table in `src/lib/geocoding.js` (~20 Maricopa County zips) — add more or replace with a real geocoder as you expand areas
 - Radius mode silently skips leads without coordinates (common for CSV imports that didn't include lat/lng) — the response includes `skipped_no_coordinates` so you can see if that's happening
 - The Nominatim geocoding call (`geocodeAddress`) is untested in this build environment — no network access to verify it live. Test it once deployed; it's free and requires no API key, but is rate-limited and requires a descriptive `User-Agent` (set `GEOCODER_USER_AGENT` in `.env`)
+
+## Solar Fit Score
+
+A transparent heuristic for prioritizing which leads are most likely to be good solar prospects — **not a purchased or scraped intent signal**, just a scoring layer on top of data this app already legitimately sources from the county (property records) and reps (the visited/has_solar/no_further_attempt flags). This came up directly because there's no free, legitimate dataset of "who requested solar info" — that's private commercial lead-gen data (EnergySage, Modernize, etc. sell exactly that). This is the honest alternative: score what's public against what's known to correlate with solar interest.
+
+`src/lib/solarFit.js` (backend) and `admin/src/lib/solarFit.js` (a duplicated copy for the browser — see the comment in the file for why) implement the scoring:
+
+- **Pool (+30)** — the single strongest signal. Pool pumps/heaters are a well-documented major driver of high electric bills, which is the most common reason homeowners actually pursue solar.
+- **Home value (+12 to +20)** — higher-value homes more often have the financing profile for a system.
+- **Square footage (+8 to +15)** — bigger homes mean bigger bills and more usable roof area.
+- **Purchase recency (+8 to +15)** — the classic new-mover window where homeowners are actively making improvement decisions.
+- **Pre-1990 construction (−5)** — a mild penalty, not an exclusion; older roofs sometimes need replacement before panels go on, which is a real objection installers run into.
+- **Already has solar, or marked no further attempt → excluded entirely** (score 0, clearly labeled `excluded: true`, not just ranked low). This is computed fresh on every read rather than stored, so flipping a flag changes the score immediately — verified by testing this directly: marking a top-scoring lead `has_solar` flipped it to excluded on the very next fetch, no stale data possible.
+
+Every score comes with a plain-English list of *why* — this is deliberately not a black box a manager has to trust blindly.
+
+**Where it shows up:**
+- Leads page — sortable "Solar fit" column, toggle button to sort best-prospects-first
+- ScoutHive preview — scored live as you fetch estimated value / property details per row (a "Sort by solar fit" toggle re-ranks as more data comes in)
+- Contact card, both admin and employee — score + reasons shown to the rep before they knock
+
+**Tested:** the scoring function against 6 scenarios (strong prospect, exclusions, missing-data fallback, score ceiling) and, more importantly, through the real API end-to-end — imported a strong-prospect lead and a weak one via ScoutHive, confirmed `?sort=solar_fit` correctly ranked them, then flipped a flag mid-session and confirmed the exclusion took effect immediately.
+
+## Appointments
+
+Booking, a manager rollup, and BusyBee-drafted reminders — `src/routes/appointments.js`, `src/lib/businessDays.js`, `src/lib/busybee.js` (`generateReminderMessage`).
+
+**The 3.5-business-day booking window:** enforced server-side, not just in the UI. `src/lib/businessDays.js` walks forward skipping weekends (documented in-file as a calendar-day simplification, not an hours-of-operation model — the same kind of simplification "3 business days shipping" estimates use). Tested against 4 scenarios including weekend-crossing edge cases (a Thursday-morning booking correctly skips the weekend and lands the following Tuesday, not Saturday) — all correct.
+
+**The window is anchored to when an appointment was first created, not "now."** `originally_booked_at` is stored immutably at creation; rescheduling re-validates against that original timestamp, not the current time — otherwise a reschedule could be used to sneak an appointment further out than the cap allows. Verified directly: booked an appointment, then tried to reschedule it 10 days out — correctly rejected, capped by the original booking time.
+
+**Who can book:** reps can book for themselves, only for a lead on one of their own assigned routes (same access-control pattern as everything else lead-scoped in this app — verified a rep gets a 403 trying to book against an unassigned lead). Admin/manager can book for any rep and any lead in the tenant.
+
+**Where it shows up:**
+- Employee: "My Appointments" (linked from the My Routes home screen) — lists upcoming appointments, flags ones with a reminder due (within the hour, or the day before) with a red tag, lets a rep mark complete/cancelled. Booking itself happens from a stop's contact card.
+- Admin: **Appointments** tab in the sidebar — the manager rollup, filterable by rep and status. Booking also available from any lead's contact card.
+
+**BusyBee reminders — 24-hour and 1-hour, email or text:** `GET /api/appointments/:id/reminder?type=24h|1h&channel=email|text`. Same generate-then-handoff pattern as the rest of BusyBee — nothing sends automatically, the rep reviews the draft and taps "Open in Mail/Messages" themselves. Kept deliberately short (2-3 sentences, one clear CTA) per spec.
+
+**Only addressed by name if there's an actual enriched contact name on file.** The prompt explicitly instructs BusyBee not to invent or guess a name — a lead with no `full_name` gets a generic, name-free draft rather than something that reads like it knows who's home. This was a specific requirement and is enforced in the prompt itself, not just a suggestion.
+
+Tested: full appointment lifecycle (book → appears in manager rollup → mark completed) end to end against Postgres; all four reminder-endpoint validation paths (bad type, bad channel, missing email, missing phone) return clean errors; both channels correctly reach the live-generation step once real contact data exists.
+
+**Known gap:** unlike lead-level BusyBee messages, using a reminder draft doesn't currently log a note on the lead the way the lead-messaging flow does — worth adding for parity if reminders turn out to be heavily used.
+
+### Part 2 (scoped, not built): self-service appointment booking page
+
+A public-facing landing page where a homeowner picks a time from a rep's availability, without a rep manually creating the appointment. Scoped here rather than built, per your instruction — this is a meaningfully bigger piece than the manager/rep-driven booking above:
+
+**New surface area needed:**
+- A public (unauthenticated) route, e.g. `routehive.app/book/:repId` or a per-tenant branded link — this is the first genuinely public-facing page in the app; everything else requires a login.
+- Rep availability model — a new table/UI for a rep (or manager, for all reps) to define recurring weekly availability windows (e.g. "Mon/Wed/Fri 9am-4pm"), plus the ability to block out specific days off.
+- Real-time conflict checking against already-booked appointments — the self-service picker needs to only show genuinely open slots, which means querying existing appointments live as the page renders, not just showing raw availability.
+- Same 3.5-business-day cap would need to apply here too, presumably, unless self-service bookings get their own window.
+- A booking confirmation flow for the homeowner (their own email/phone captured at booking time — this is the one place in the app where a *lead*, not a rep, would be providing contact info directly, which has different validation/spam-prevention needs than everything built so far, e.g. some kind of confirmation step or rate limiting to stop the page from being spammed with fake bookings).
+- Notification back to the rep/manager when a self-service booking comes in.
+
+**Rough effort relative to what's already built:** bigger than any single feature built this session — it's not just new endpoints, it's a new *kind* of surface (public, no auth, homeowner-facing) with its own trust/abuse considerations the rest of this app hasn't needed to deal with. Worth scoping as its own focused pass rather than folding into a broader turn.
 
 ## Deploying to Railway
 

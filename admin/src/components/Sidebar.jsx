@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { to: '/leads', label: 'Leads' },
   { to: '/routes', label: 'Routes' },
   { to: '/scouthive', label: 'ScoutHive' },
+  { to: '/appointments', label: 'Appointments' },
   { to: '/team', label: 'Team' },
   { to: '/integrations', label: 'Integrations' }
 ];

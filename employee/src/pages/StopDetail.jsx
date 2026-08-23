@@ -17,6 +17,11 @@ export default function StopDetail() {
   const { id: routeId, stopId } = useParams();
   const [stop, setStop] = useState(null);
   const [lead, setLead] = useState(null);
+  const [showApptForm, setShowApptForm] = useState(false);
+  const [apptDate, setApptDate] = useState('');
+  const [apptNotes, setApptNotes] = useState('');
+  const [savingAppt, setSavingAppt] = useState(false);
+  const [apptResult, setApptResult] = useState(null);
   const [error, setError] = useState(null);
   const [checkingIn, setCheckingIn] = useState(false);
   const [loggingOutcome, setLoggingOutcome] = useState(false);
@@ -26,6 +31,9 @@ export default function StopDetail() {
   const [editingContact, setEditingContact] = useState(false);
   const [contactDraft, setContactDraft] = useState({ full_name: '', co_owner_name: '', email: '', phone: '' });
   const [savingContact, setSavingContact] = useState(false);
+  const [loadingValue, setLoadingValue] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [intelError, setIntelError] = useState(null);
 
   async function load() {
     setError(null);
@@ -125,6 +133,55 @@ export default function StopDetail() {
       setError(err.message);
     } finally {
       setSavingContact(false);
+    }
+  }
+
+  async function fetchEstimatedValue() {
+    setLoadingValue(true);
+    setIntelError(null);
+    try {
+      const result = await api.getLeadEstimatedValue(lead.id);
+      setLead((prev) => ({ ...prev, ...result }));
+    } catch (err) {
+      setIntelError(err.message);
+    } finally {
+      setLoadingValue(false);
+    }
+  }
+
+  async function fetchPropertyDetails() {
+    setLoadingDetails(true);
+    setIntelError(null);
+    try {
+      const result = await api.getLeadPropertyDetails(lead.id);
+      setLead((prev) => ({ ...prev, ...result }));
+    } catch (err) {
+      setIntelError(err.message);
+    } finally {
+      setLoadingDetails(false);
+    }
+  }
+
+  async function bookAppointment(e) {
+    e.preventDefault();
+    if (!apptDate) return;
+    setSavingAppt(true);
+    setApptResult(null);
+    setError(null);
+    try {
+      const appt = await api.createAppointment({
+        lead_id: lead.id,
+        scheduled_at: new Date(apptDate).toISOString(),
+        notes: apptNotes || undefined
+      });
+      setApptResult(appt);
+      setShowApptForm(false);
+      setApptDate('');
+      setApptNotes('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingAppt(false);
     }
   }
 
@@ -232,6 +289,40 @@ export default function StopDetail() {
             </div>
 
             <div className="section">
+              <h3 style={{ marginBottom: 10 }}>Appointment</h3>
+              {apptResult && (
+                <div style={{ fontSize: 14, color: 'var(--green)', marginBottom: 8 }}>
+                  Booked for {new Date(apptResult.scheduled_at).toLocaleString()}
+                </div>
+              )}
+              {!showApptForm ? (
+                <button className="btn btn-outline" onClick={() => setShowApptForm(true)}>Schedule appointment</button>
+              ) : (
+                <form onSubmit={bookAppointment}>
+                  <div className="field">
+                    <label>Date &amp; time</label>
+                    <input type="datetime-local" value={apptDate} onChange={(e) => setApptDate(e.target.value)} required />
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+                    Must be within the next 3.5 business days.
+                  </div>
+                  <div className="field">
+                    <label>Notes (optional)</label>
+                    <input value={apptNotes} onChange={(e) => setApptNotes(e.target.value)} placeholder="e.g. wants to see financing options" />
+                  </div>
+                  <div className="btn-row">
+                    <button className="btn btn-amber" type="submit" disabled={savingAppt || !apptDate}>
+                      {savingAppt ? 'Booking…' : 'Book it'}
+                    </button>
+                    <button type="button" className="btn btn-outline" onClick={() => setShowApptForm(false)} disabled={savingAppt}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            <div className="section">
               <h3 style={{ marginBottom: 10 }}>Outcome</h3>
               <div className="outcome-grid">
                 {OUTCOMES.map((o) => (
@@ -263,6 +354,68 @@ export default function StopDetail() {
                   No further attempt
                 </label>
               </div>
+            </div>
+
+            {lead.solar_fit && !lead.solar_fit.excluded && (
+              <div className="section">
+                <h3 style={{ marginBottom: 8 }}>Solar fit</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span
+                    className={`tag ${lead.solar_fit.score >= 50 ? 'tag-green' : lead.solar_fit.score >= 25 ? 'tag-amber' : 'tag-neutral'}`}
+                    style={{ fontSize: 14, padding: '4px 10px' }}
+                  >
+                    {lead.solar_fit.score}/100
+                  </span>
+                </div>
+                <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13, color: 'var(--text-muted)' }}>
+                  {lead.solar_fit.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              </div>
+            )}
+
+            <div className="section">
+              <h3 style={{ marginBottom: 10 }}>County intel</h3>
+              {!lead.apn ? (
+                <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
+                  No parcel number on file for this lead.
+                </div>
+              ) : (
+                <>
+                  {intelError && <div className="error-banner" style={{ marginBottom: 10 }}>{intelError}</div>}
+                  <div style={{ marginBottom: 10 }}>
+                    {lead.estimated_value ? (
+                      <div style={{ fontSize: 15 }}>
+                        ${Number(lead.estimated_value).toLocaleString()}
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                          {lead.value_type === 'full_cash_value' ? 'Assessed value' : 'Limited value'}, tax year {lead.valuation_year}
+                        </div>
+                      </div>
+                    ) : (
+                      <button className="btn btn-outline" onClick={fetchEstimatedValue} disabled={loadingValue}>
+                        {loadingValue ? 'Looking up…' : 'Look up estimated value'}
+                      </button>
+                    )}
+                  </div>
+                  <div>
+                    {lead.property_intel_fetched_at && (lead.bedrooms || lead.square_footage || lead.has_pool !== null) ? (
+                      <div style={{ fontSize: 15 }}>
+                        {[
+                          lead.bedrooms && `${lead.bedrooms}bd`,
+                          lead.bathrooms && `${lead.bathrooms}ba`,
+                          lead.square_footage && `${Number(lead.square_footage).toLocaleString()} sqft`,
+                          lead.year_built && `Built ${lead.year_built}`
+                        ].filter(Boolean).join(' · ')}
+                        {lead.has_pool === true && <span className="tag tag-amber" style={{ marginLeft: 8 }}>Pool</span>}
+                        {lead.has_pool === false && <span className="tag tag-neutral" style={{ marginLeft: 8 }}>No pool</span>}
+                      </div>
+                    ) : (
+                      <button className="btn btn-outline" onClick={fetchPropertyDetails} disabled={loadingDetails}>
+                        {loadingDetails ? 'Looking up…' : 'Look up property details'}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="section">

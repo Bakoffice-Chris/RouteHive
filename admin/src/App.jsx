@@ -10,6 +10,7 @@ import RouteDetail from './pages/RouteDetail.jsx';
 import Team from './pages/Team.jsx';
 import Integrations from './pages/Integrations.jsx';
 import ScoutHive from './pages/ScoutHive.jsx';
+import Appointments from './pages/Appointments.jsx';
 
 function RequireAuth({ children }) {
   const { user } = useAuth();
@@ -29,6 +30,7 @@ function AppRoutes() {
       <Route path="/team" element={<RequireAuth><Team /></RequireAuth>} />
       <Route path="/integrations" element={<RequireAuth><Integrations /></RequireAuth>} />
       <Route path="/scouthive" element={<RequireAuth><ScoutHive /></RequireAuth>} />
+      <Route path="/appointments" element={<RequireAuth><Appointments /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/leads" replace />} />
     </RouterRoutes>
   );

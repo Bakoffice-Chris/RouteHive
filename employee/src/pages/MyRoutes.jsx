@@ -31,9 +31,13 @@ export default function MyRoutes() {
       <TopBar />
       <div className="content">
         <h1 style={{ marginBottom: 4 }}>My Routes</h1>
-        <div className="mono" style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20 }}>
+        <div className="mono" style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
           {routes.length} assigned
         </div>
+
+        <Link to="/appointments" className="btn btn-outline" style={{ marginBottom: 20, display: 'flex' }}>
+          My Appointments
+        </Link>
 
         {error && <div className="error-banner">{error}</div>}
 

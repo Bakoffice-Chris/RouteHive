@@ -11,14 +11,50 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
   const [editingContact, setEditingContact] = useState(false);
   const [contactDraft, setContactDraft] = useState({ full_name: '', co_owner_name: '', email: '', phone: '' });
   const [savingContact, setSavingContact] = useState(false);
+  const [loadingValue, setLoadingValue] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [intelError, setIntelError] = useState(null);
+  const [showApptForm, setShowApptForm] = useState(false);
+  const [apptDate, setApptDate] = useState('');
+  const [apptRepId, setApptRepId] = useState('');
+  const [apptNotes, setApptNotes] = useState('');
+  const [savingAppt, setSavingAppt] = useState(false);
+  const [apptResult, setApptResult] = useState(null);
+  const [reps, setReps] = useState([]);
 
   async function load() {
     setError(null);
     try {
-      const data = await api.getLead(leadId);
+      const [data, repList] = await Promise.all([api.getLead(leadId), api.getUsers('rep')]);
       setLead(data);
+      setReps(repList);
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  async function bookAppointment(e) {
+    e.preventDefault();
+    if (!apptDate || !apptRepId) return;
+    setSavingAppt(true);
+    setApptResult(null);
+    setError(null);
+    try {
+      const appt = await api.createAppointment({
+        lead_id: leadId,
+        rep_id: apptRepId,
+        scheduled_at: new Date(apptDate).toISOString(),
+        notes: apptNotes || undefined
+      });
+      setApptResult(appt);
+      setShowApptForm(false);
+      setApptDate('');
+      setApptNotes('');
+      setApptRepId('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingAppt(false);
     }
   }
 
@@ -82,6 +118,32 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
       setError(err.message);
     } finally {
       setSavingContact(false);
+    }
+  }
+
+  async function fetchEstimatedValue() {
+    setLoadingValue(true);
+    setIntelError(null);
+    try {
+      const result = await api.getLeadEstimatedValue(leadId);
+      setLead((prev) => ({ ...prev, ...result }));
+    } catch (err) {
+      setIntelError(err.message);
+    } finally {
+      setLoadingValue(false);
+    }
+  }
+
+  async function fetchPropertyDetails() {
+    setLoadingDetails(true);
+    setIntelError(null);
+    try {
+      const result = await api.getLeadPropertyDetails(leadId);
+      setLead((prev) => ({ ...prev, ...result }));
+    } catch (err) {
+      setIntelError(err.message);
+    } finally {
+      setLoadingDetails(false);
     }
   }
 
@@ -191,6 +253,89 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
                 <input type="checkbox" checked={lead.no_further_attempt} disabled={savingFlag === 'no_further_attempt'} onChange={() => toggleFlag('no_further_attempt')} />
                 No further attempt
               </label>
+            </div>
+
+            <div className="card" style={{ marginTop: 16, padding: 14 }}>
+              <h3 style={{ marginBottom: 10 }}>Appointment</h3>
+              {apptResult && (
+                <div style={{ fontSize: 13, color: 'var(--green)', marginBottom: 8 }}>
+                  Booked for {new Date(apptResult.scheduled_at).toLocaleString()}
+                </div>
+              )}
+              {!showApptForm ? (
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowApptForm(true)}>Schedule appointment</button>
+              ) : (
+                <form onSubmit={bookAppointment}>
+                  <div className="field">
+                    <label>Rep</label>
+                    <select value={apptRepId} onChange={(e) => setApptRepId(e.target.value)} required>
+                      <option value="">Select a rep…</option>
+                      {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Date &amp; time</label>
+                    <input type="datetime-local" value={apptDate} onChange={(e) => setApptDate(e.target.value)} required />
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+                    Must be within the next 3.5 business days.
+                  </div>
+                  <div className="field">
+                    <label>Notes (optional)</label>
+                    <input value={apptNotes} onChange={(e) => setApptNotes(e.target.value)} placeholder="e.g. wants to see financing options" />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn btn-amber btn-sm" type="submit" disabled={savingAppt || !apptDate || !apptRepId}>
+                      {savingAppt ? 'Booking…' : 'Book it'}
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowApptForm(false)} disabled={savingAppt}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            <div className="card" style={{ marginTop: 16, padding: 14 }}>
+              <h3 style={{ marginBottom: 10 }}>County intel</h3>
+              {!lead.apn ? (
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  No parcel number on file — this lead wasn't sourced from Maricopa County, so county data isn't available for it.
+                </div>
+              ) : (
+                <>
+                  {intelError && <div className="error-banner" style={{ marginBottom: 10 }}>{intelError}</div>}
+                  <div style={{ fontSize: 14, marginBottom: 8 }}>
+                    {lead.estimated_value ? (
+                      <span>${Number(lead.estimated_value).toLocaleString()} <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>({lead.value_type === 'full_cash_value' ? 'assessed value' : 'limited value'}, tax year {lead.valuation_year})</span></span>
+                    ) : (
+                      <button className="btn btn-ghost btn-sm" onClick={fetchEstimatedValue} disabled={loadingValue}>
+                        {loadingValue ? 'Looking up…' : 'Look up estimated value'}
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 14 }}>
+                    {lead.property_intel_fetched_at && (lead.bedrooms || lead.square_footage || lead.has_pool !== null) ? (
+                      <div>
+                        <span>
+                          {[
+                            lead.bedrooms && `${lead.bedrooms}bd`,
+                            lead.bathrooms && `${lead.bathrooms}ba`,
+                            lead.square_footage && `${Number(lead.square_footage).toLocaleString()} sqft`,
+                            lead.year_built && `Built ${lead.year_built}`
+                          ].filter(Boolean).join(' · ')}
+                        </span>
+                        {lead.has_pool === true && <span className="tag tag-amber" style={{ padding: '1px 6px', marginLeft: 8 }}>Pool</span>}
+                        {lead.has_pool === false && <span className="tag tag-neutral" style={{ padding: '1px 6px', marginLeft: 8 }}>No pool</span>}
+                      </div>
+                    ) : (
+                      <button className="btn btn-ghost btn-sm" onClick={fetchPropertyDetails} disabled={loadingDetails}>
+                        {loadingDetails ? 'Looking up…' : 'Look up property details'}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             <BusyBeePanel

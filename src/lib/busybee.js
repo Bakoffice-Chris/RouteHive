@@ -135,4 +135,70 @@ async function generateMessageDraft(lead, channel, repName) {
   throw new Error(`Unknown channel: ${channel}`);
 }
 
-module.exports = { generateBrief, generateMessageDraft };
+/**
+ * Drafts a very short appointment reminder (2-3 sentences, one clear CTA).
+ * Only addresses the recipient by name if there's an actual enriched
+ * contact name on file - a bare address/lead with no known homeowner name
+ * gets a generic, name-free draft rather than a guessed or placeholder
+ * greeting. Like generateMessageDraft, this only generates text - sending
+ * is a human action in their own Mail/Messages app.
+ *
+ * @param {object} appointment - { scheduled_at, duration_minutes }
+ * @param {object} lead - the lead detail object (address, full_name if any)
+ * @param {'email'|'text'} channel
+ * @param {'24h'|'1h'} reminderType
+ * @param {string} repName
+ * @returns {Promise<{subject?: string, body: string}>}
+ */
+async function generateReminderMessage(appointment, lead, channel, reminderType, repName) {
+  const hasName = !!lead.full_name;
+  const nameLine = hasName
+    ? `The homeowner's name on file is ${lead.full_name} - address them by name.`
+    : 'There is no homeowner name on file - do NOT invent or guess a name; use a generic greeting or none at all.';
+
+  const apptTime = new Date(appointment.scheduled_at).toLocaleString('en-US', {
+    weekday: 'long',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  });
+
+  const timingLine =
+    reminderType === '24h'
+      ? 'This is a 24-hour advance reminder, sent the day before the appointment.'
+      : 'This is a final reminder, sent about 1 hour before the appointment - keep urgency low-key, just a quick heads-up, not alarming.';
+
+  const context = `Appointment: ${apptTime}, at ${lead.address}. ${nameLine} ${timingLine} ${repName ? `Sign off with the rep's first name: ${repName}.` : ''}`;
+
+  const lengthRule =
+    channel === 'text'
+      ? 'Under 300 characters total. No greeting formality, no sign-off - just the message.'
+      : '2-3 sentences MAXIMUM in the body, not a full email. Include a short subject line.';
+
+  if (channel === 'email') {
+    const raw = await callClaude(
+      `You are BusyBee, a field sales assistant. Draft a VERY SHORT appointment reminder email. ${lengthRule} One clear call-to-action (e.g. "Reply to confirm" or "See you then!"). ${nameLine} Respond in exactly this format with no extra text:\nSUBJECT: <subject line>\nBODY:\n<email body>`,
+      context,
+      200
+    );
+    const subjectMatch = raw.match(/SUBJECT:\s*(.+)/);
+    const bodyMatch = raw.match(/BODY:\s*([\s\S]+)/);
+    return {
+      subject: subjectMatch ? subjectMatch[1].trim() : 'Appointment reminder',
+      body: bodyMatch ? bodyMatch[1].trim() : raw
+    };
+  }
+
+  if (channel === 'text') {
+    const body = await callClaude(
+      `You are BusyBee, a field sales assistant. Draft a VERY SHORT appointment reminder text message. ${lengthRule} One clear call-to-action. ${nameLine} Respond with only the message text, nothing else.`,
+      context,
+      100
+    );
+    return { body };
+  }
+
+  throw new Error(`Unknown channel: ${channel}`);
+}
+
+module.exports = { generateBrief, generateMessageDraft, generateReminderMessage };
