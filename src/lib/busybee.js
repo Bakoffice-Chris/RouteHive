@@ -18,7 +18,8 @@ const DEFAULT_MODEL = 'claude-haiku-4-5-20251001'; // fast/cheap - a short summa
 function buildLeadContext(lead) {
   const lines = [];
   lines.push(`Address: ${lead.address}, ${lead.city}, ${lead.state} ${lead.zip}`);
-  if (lead.full_name) lines.push(`Homeowner: ${lead.full_name}`);
+  const ownerName = lead.full_name || lead.owner_name_raw;
+  if (ownerName) lines.push(`Homeowner: ${ownerName}`);
   if (lead.purchase_date) lines.push(`Home purchased: ${lead.purchase_date}${lead.sale_price ? ` for $${lead.sale_price}` : ''}`);
   lines.push(`Current disposition: ${lead.disposition}`);
   lines.push(`Visited before: ${lead.visited ? 'yes' : 'no'}`);

@@ -370,12 +370,11 @@ router.get('/:id/draft', async (req, res) => {
   if (channel !== 'email' && channel !== 'text') {
     return res.status(400).json({ error: "channel must be 'email' or 'text'" });
   }
-  if (channel === 'email' && !lead.email) {
-    return res.status(400).json({ error: 'This lead has no email on file' });
-  }
-  if (channel === 'text' && !lead.phone) {
-    return res.status(400).json({ error: 'This lead has no phone number on file' });
-  }
+  // No longer hard-blocked on missing contact info - BusyBee still drafts
+  // the message from everything else on the lead record (address, purchase
+  // history, disposition, flags, full note history), and the rep can type
+  // in the recipient by hand before opening their Mail/Messages app if it's
+  // not already on file.
 
   try {
     const draft = await generateMessageDraft(lead, channel, req.user.name);

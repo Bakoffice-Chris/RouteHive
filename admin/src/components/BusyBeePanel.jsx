@@ -9,6 +9,7 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
   const [brief, setBrief] = useState(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [recipient, setRecipient] = useState('');
   const [savedToNotes, setSavedToNotes] = useState(false);
 
   async function runBrief() {
@@ -34,6 +35,7 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
       const result = await api.getLeadDraft(leadId, channel);
       setSubject(result.subject || '');
       setBody(result.body || '');
+      setRecipient((channel === 'email' ? result.recipient_email : result.recipient_phone) || '');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -41,12 +43,6 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
     }
   }
 
-  // Fires when the rep actually taps "Open in Mail/Messages" - this is the
-  // point where they've chosen to use the draft, not just generated one.
-  // Doesn't block or delay the mailto:/sms: navigation; the note save runs
-  // in the background while the native app opens. Logged as "opened," not
-  // "sent" - there's no way to confirm the rep actually pressed send in
-  // their own Mail/Messages app afterward.
   async function handleUse(channel) {
     const label = channel === 'email' ? `Email opened in Mail (subject: "${subject}")` : 'Text opened in Messages';
     const noteBody = `[BusyBee] ${label}\n\n${body}`;
@@ -55,8 +51,7 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
       setSavedToNotes(true);
       onNoteSaved?.(note);
     } catch (err) {
-      // Don't block or alarm the rep over a note-save failure - the message
-      // itself still opened fine. Just skip the "saved" confirmation.
+      // Skip the confirmation quietly - the message still opened fine.
     }
   }
 
@@ -65,9 +60,12 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
     setBrief(null);
     setSubject('');
     setBody('');
+    setRecipient('');
     setError(null);
     setSavedToNotes(false);
   }
+
+  const canLaunch = recipient.trim().length > 0;
 
   return (
     <div className="busybee-panel">
@@ -82,12 +80,8 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
       {!mode && (
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <button className="btn btn-ghost btn-sm" onClick={runBrief}>Pre-visit brief</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => runDraft('email')} disabled={!leadEmail} title={!leadEmail ? 'No email on file' : ''}>
-            Draft email
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => runDraft('text')} disabled={!leadPhone} title={!leadPhone ? 'No phone on file' : ''}>
-            Draft text
-          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => runDraft('email')}>Draft email</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => runDraft('text')}>Draft text</button>
         </div>
       )}
 
@@ -104,6 +98,15 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
       {mode === 'email' && !loading && (subject || body) && (
         <div style={{ marginTop: 12 }}>
           <div className="field">
+            <label>To</label>
+            <input
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="homeowner@email.com — not on file, enter it here"
+              style={{ padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 14, width: '100%' }}
+            />
+          </div>
+          <div className="field">
             <label>Subject</label>
             <input value={subject} onChange={(e) => setSubject(e.target.value)} style={{ padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 14, width: '100%' }} />
           </div>
@@ -112,9 +115,13 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
             <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={6} style={{ padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 14, width: '100%', fontFamily: 'inherit' }} />
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <a className="btn btn-amber btn-sm" href={getMailtoUrl(leadEmail, subject, body)} onClick={() => handleUse('email')}>
-              Open in Mail
-            </a>
+            {canLaunch ? (
+              <a className="btn btn-amber btn-sm" href={getMailtoUrl(recipient, subject, body)} onClick={() => handleUse('email')}>
+                Open in Mail
+              </a>
+            ) : (
+              <span className="btn btn-amber btn-sm" style={{ opacity: 0.4, cursor: 'not-allowed' }}>Enter an email above</span>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={reset}>Back</button>
             {savedToNotes && <span style={{ fontSize: 12, color: 'var(--green)' }}>Saved to notes ✓</span>}
           </div>
@@ -124,13 +131,26 @@ export default function BusyBeePanel({ leadId, leadEmail, leadPhone, onNoteSaved
       {mode === 'text' && !loading && body && (
         <div style={{ marginTop: 12 }}>
           <div className="field">
+            <label>To</label>
+            <input
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="Phone number — not on file, enter it here"
+              style={{ padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 14, width: '100%' }}
+            />
+          </div>
+          <div className="field">
             <label>Message</label>
             <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} style={{ padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 14, width: '100%', fontFamily: 'inherit' }} />
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <a className="btn btn-amber btn-sm" href={getSmsUrl(leadPhone, body)} onClick={() => handleUse('text')}>
-              Open in Messages
-            </a>
+            {canLaunch ? (
+              <a className="btn btn-amber btn-sm" href={getSmsUrl(recipient, body)} onClick={() => handleUse('text')}>
+                Open in Messages
+              </a>
+            ) : (
+              <span className="btn btn-amber btn-sm" style={{ opacity: 0.4, cursor: 'not-allowed' }}>Enter a phone number above</span>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={reset}>Back</button>
             {savedToNotes && <span style={{ fontSize: 12, color: 'var(--green)' }}>Saved to notes ✓</span>}
           </div>
