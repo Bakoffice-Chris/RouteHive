@@ -1,0 +1,126 @@
+:root {
+  --ink: #17212B;
+  --paper: #EEF1EE;
+  --paper-card: #FFFFFF;
+  --line: #D7DCD9;
+  --amber: #E8A33D;
+  --amber-deep: #C7822A;
+  --green: #3B8563;
+  --red: #C1443B;
+  --text-primary: #17212B;
+  --text-muted: #5B6A73;
+  --text-inverse: #F2F4F2;
+  --font-display: 'Barlow Condensed', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-brand: 'Orbitron', sans-serif;
+  --radius: 6px;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: var(--font-body);
+  background: var(--paper);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  background: var(--ink);
+  color: var(--text-inverse);
+  padding: 24px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.header img { width: 36px; height: 36px; }
+.header .wordmark { font-family: var(--font-brand); font-size: 16px; font-weight: 700; }
+.header .wordmark .route { color: var(--text-inverse); }
+.header .wordmark .hive { color: var(--amber); }
+
+.body-content { flex: 1; padding: 24px 20px 40px; }
+
+h1 { font-family: var(--font-display); font-size: 24px; text-transform: uppercase; letter-spacing: 0.02em; margin: 0 0 4px; }
+.sub { color: var(--text-muted); font-size: 14px; margin-bottom: 24px; }
+
+.card { background: var(--paper-card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+
+.day-group { margin-bottom: 20px; }
+.day-label { font-family: var(--font-display); font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 8px; }
+.slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.slot-btn {
+  padding: 12px 8px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-card);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+.slot-btn:active, .slot-btn.selected { border-color: var(--ink); background: var(--ink); color: var(--text-inverse); }
+
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.field input {
+  padding: 13px 14px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 16px;
+  font-family: var(--font-body);
+}
+.field input:focus { outline: 2px solid var(--amber); border-color: var(--amber); }
+
+/* Honeypot field - present in the DOM for bots to fill, invisible and
+   unreachable by tab-order for real users. */
+.hp-field {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 15px;
+  border-radius: var(--radius);
+  border: none;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+.btn-amber { background: var(--amber); color: var(--ink); }
+.btn-amber:disabled { opacity: 0.5; }
+.btn-outline { background: transparent; border: 1.5px solid var(--line); color: var(--text-primary); }
+
+.error-banner {
+  background: rgba(193,68,59,0.08);
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.confirm-icon {
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--green); color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px; margin: 0 auto 16px;
+}
+
+.empty-state { text-align: center; padding: 40px 16px; color: var(--text-muted); font-size: 15px; }

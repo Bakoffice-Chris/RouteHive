@@ -24,6 +24,9 @@ export default function Leads() {
   const [exporting, setExporting] = useState(false);
   const [dispositionFilter, setDispositionFilter] = useState('');
   const [sortBySolarFit, setSortBySolarFit] = useState(false);
+  const [showAddLead, setShowAddLead] = useState(false);
+  const [newLead, setNewLead] = useState({ address: '', city: '', state: '', zip: '', owner_name: '' });
+  const [savingLead, setSavingLead] = useState(false);
   const [stateFilter, setStateFilter] = useState('');
   const [stateFilterDebounced, setStateFilterDebounced] = useState('');
   const [visitedFilter, setVisitedFilter] = useState(false);
@@ -117,6 +120,23 @@ export default function Leads() {
     }
   }
 
+  async function handleAddLead(e) {
+    e.preventDefault();
+    if (!newLead.address.trim()) return;
+    setSavingLead(true);
+    setError(null);
+    try {
+      await api.createLead(newLead);
+      setNewLead({ address: '', city: '', state: '', zip: '', owner_name: '' });
+      setShowAddLead(false);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingLead(false);
+    }
+  }
+
   function buildRouteFromSelected() {
     const ids = Array.from(selected);
     navigate('/routes/new', { state: { leadIds: ids } });
@@ -135,6 +155,9 @@ export default function Leads() {
           <div className="subtitle">{leads.length} in view</div>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button className="btn btn-amber btn-sm" onClick={() => setShowAddLead((v) => !v)}>
+            {showAddLead ? 'Cancel' : 'Add lead'}
+          </button>
           <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
             {importing ? 'Importing…' : 'Import CSV'}
             <input type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{ display: 'none' }} />
@@ -154,6 +177,39 @@ export default function Leads() {
           </button>
         </div>
       </div>
+
+      {showAddLead && (
+        <div className="card" style={{ marginBottom: 20, maxWidth: 480 }}>
+          <h3 style={{ marginBottom: 12 }}>Add a lead</h3>
+          <form onSubmit={handleAddLead}>
+            <div className="field">
+              <label>Address</label>
+              <input value={newLead.address} onChange={(e) => setNewLead({ ...newLead, address: e.target.value })} placeholder="123 Main St" required />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div className="field" style={{ flex: 2 }}>
+                <label>City</label>
+                <input value={newLead.city} onChange={(e) => setNewLead({ ...newLead, city: e.target.value })} />
+              </div>
+              <div className="field" style={{ flex: 1 }}>
+                <label>State</label>
+                <input value={newLead.state} onChange={(e) => setNewLead({ ...newLead, state: e.target.value })} maxLength={2} style={{ textTransform: 'uppercase' }} />
+              </div>
+              <div className="field" style={{ flex: 1 }}>
+                <label>Zip</label>
+                <input value={newLead.zip} onChange={(e) => setNewLead({ ...newLead, zip: e.target.value })} />
+              </div>
+            </div>
+            <div className="field">
+              <label>Owner name (optional)</label>
+              <input value={newLead.owner_name} onChange={(e) => setNewLead({ ...newLead, owner_name: e.target.value })} />
+            </div>
+            <button className="btn btn-amber" type="submit" disabled={savingLead || !newLead.address.trim()}>
+              {savingLead ? 'Adding…' : 'Add lead'}
+            </button>
+          </form>
+        </div>
+      )}
 
       {notesImportResult && (
         <div className="error-banner" style={{ background: 'rgba(59,133,99,0.08)', borderColor: 'var(--green)', color: 'var(--green)' }}>
@@ -223,6 +279,7 @@ export default function Leads() {
                 <th>Purchase date</th>
                 <th>Flags</th>
                 <th>Solar fit</th>
+                <th>Assigned</th>
                 <th>Disposition</th>
               </tr>
             </thead>
@@ -269,6 +326,9 @@ export default function Leads() {
                           {lead.solar_fit?.score ?? 0}/100
                         </span>
                       )}
+                    </td>
+                    <td style={{ fontSize: 13 }}>
+                      {lead.assigned_rep_name || <span style={{ color: 'var(--text-muted)' }}>Unassigned</span>}
                     </td>
                     <td onClick={() => setOpenLeadId(lead.id)}>
                       <span className={`tag ${disp.tag}`}>{disp.label}</span>

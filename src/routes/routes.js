@@ -254,6 +254,44 @@ router.get('/:id', async (req, res) => {
   res.json({ ...route, stops });
 });
 
+// --- Edit a route's name, date, or territory. Reassigning the rep happens
+// through the dedicated /assign endpoint below, not here, since that one
+// also has the lead-ownership-sync side effect.
+router.patch('/:id', requireRole('admin', 'manager'), async (req, res) => {
+  const route = await db('routes').where({ id: req.params.id, tenant_id: req.user.tenant_id }).first();
+  if (!route) return res.status(404).json({ error: 'Route not found' });
+
+  const { name, date, territory_id } = req.body;
+  const updates = {};
+  if (name !== undefined) {
+    if (!name.trim()) return res.status(400).json({ error: 'name cannot be blank' });
+    updates.name = name.trim();
+  }
+  if (date !== undefined) updates.date = date;
+  if (territory_id !== undefined) updates.territory_id = territory_id || null;
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'Provide at least one of: name, date, territory_id' });
+  }
+
+  await db('routes').where({ id: route.id }).update(updates);
+  const updated = await db('routes').where({ id: route.id }).first();
+  res.json(updated);
+});
+
+// --- Delete a route. Cascades to its route_stops (FK ON DELETE CASCADE),
+// so the stops go with it. Does NOT touch the underlying leads or their
+// assigned_rep_id ownership - a deleted route just means those addresses
+// are no longer scheduled on that particular run; ownership is tracked
+// separately and a manager can change it explicitly if needed.
+router.delete('/:id', requireRole('admin', 'manager'), async (req, res) => {
+  const route = await db('routes').where({ id: req.params.id, tenant_id: req.user.tenant_id }).first();
+  if (!route) return res.status(404).json({ error: 'Route not found' });
+
+  await db('routes').where({ id: route.id }).delete();
+  res.json({ deleted: true });
+});
+
 // --- Reorder stops. Body: { stop_ids_in_order: [...] }
 // This is where you'd plug in Google Directions waypoint optimization later -
 // for now it just accepts a manually or externally computed order.
@@ -286,6 +324,17 @@ router.patch('/:id/assign', requireRole('admin', 'manager'), async (req, res) =>
   if (!route) return res.status(404).json({ error: 'Route not found' });
 
   await db('routes').where({ id: route.id }).update({ assigned_rep_id: rep_id, status: 'assigned' });
+
+  // Sync lead ownership - every lead on this route now shows this rep as
+  // its owner, so "who owns this lead" stays consistent with "who's
+  // supposed to be knocking on it" by default. A manager can still
+  // override an individual lead's owner afterward via PATCH
+  // /leads/:id/assign without affecting the route itself.
+  await db('leads')
+    .whereIn('id', function () {
+      this.select('lead_id').from('route_stops').where('route_id', route.id);
+    })
+    .update({ assigned_rep_id: rep_id });
 
   await db('audit_logs').insert({
     tenant_id: req.user.tenant_id,

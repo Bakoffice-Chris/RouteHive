@@ -13,12 +13,21 @@ const OUTCOME_LABEL = {
   skip: 'Skipped'
 };
 
+const DISPOSITION_LABELS = {
+  not_contacted: 'Not contacted',
+  contacted: 'Contacted',
+  appointment_set: 'Appointment',
+  sold: 'Sold',
+  not_interested: 'Not interested',
+  do_not_contact: 'Do not contact'
+};
+
 export default function RouteView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [route, setRoute] = useState(null);
   const [error, setError] = useState(null);
-  const [stateFilter, setStateFilter] = useState('');
+  const [dispositionFilter, setDispositionFilter] = useState('');
   const [visitedFilter, setVisitedFilter] = useState(false);
   const [hasSolarFilter, setHasSolarFilter] = useState(false);
   const [noFurtherAttemptFilter, setNoFurtherAttemptFilter] = useState(false);
@@ -33,7 +42,7 @@ export default function RouteView() {
   const doneCount = route?.stops.filter((s) => s.visited_at).length || 0;
 
   const visibleStops = (route?.stops || []).filter((stop) => {
-    if (stateFilter.trim() && (stop.state || '').toUpperCase() !== stateFilter.trim().toUpperCase()) return false;
+    if (dispositionFilter && stop.disposition !== dispositionFilter) return false;
     if (visitedFilter && !stop.visited) return false;
     if (hasSolarFilter && !stop.has_solar) return false;
     if (noFurtherAttemptFilter && !stop.no_further_attempt) return false;
@@ -61,14 +70,17 @@ export default function RouteView() {
             </div>
 
             <div className="card" style={{ marginBottom: 16, padding: 12 }}>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                <input
-                  value={stateFilter}
-                  onChange={(e) => setStateFilter(e.target.value)}
-                  placeholder="State (e.g. AZ)"
-                  maxLength={2}
-                  style={{ flex: 1, padding: '9px 10px', border: '1px solid var(--line)', borderRadius: 4, textTransform: 'uppercase', fontSize: 13 }}
-                />
+              <div style={{ marginBottom: 10 }}>
+                <select
+                  value={dispositionFilter}
+                  onChange={(e) => setDispositionFilter(e.target.value)}
+                  style={{ width: '100%', padding: '9px 10px', border: '1px solid var(--line)', borderRadius: 4, fontSize: 13 }}
+                >
+                  <option value="">All outcomes</option>
+                  {Object.entries(DISPOSITION_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </select>
               </div>
               <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>

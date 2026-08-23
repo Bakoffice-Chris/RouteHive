@@ -11,6 +11,8 @@ const userRoutes = require('./routes/users');
 const integrationRoutes = require('./routes/integrations');
 const externalRoutes = require('./routes/external');
 const appointmentRoutes = require('./routes/appointments');
+const availabilityRoutes = require('./routes/availability');
+const bookingRoutes = require('./routes/booking');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -29,6 +31,12 @@ app.use('/api/users', userRoutes);
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/external', externalRoutes);
 app.use('/api/appointments', appointmentRoutes);
+app.use('/api/availability', availabilityRoutes);
+// Public - deliberately mounted outside /api and without requireAuth
+// anywhere in its chain. Kept as its own top-level path (not nested under
+// /api/leads or similar) so it's immediately visually obvious in the
+// codebase which routes are unauthenticated.
+app.use('/public/booking', bookingRoutes);
 
 // Basic error handler - keeps stack traces out of API responses
 app.use((err, req, res, next) => {

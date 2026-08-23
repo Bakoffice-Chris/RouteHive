@@ -7,6 +7,9 @@ const { syncMaricopaCounty } = require('../jobs/syncMaricopaCounty');
 const { fetchRecentSales, fetchEstimatedValue, fetchPropertyDetails } = require('../lib/maricopaSales');
 const { generateBrief, generateMessageDraft } = require('../lib/busybee');
 const { computeSolarFitScore } = require('../lib/solarFit');
+const crypto = require('crypto');
+const { addBusinessDays } = require('../lib/businessDays');
+const { MAX_BUSINESS_DAYS_OUT } = require('../lib/appointmentRules');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -367,6 +370,97 @@ router.post('/scouthive/import', requireRole('admin', 'manager'), async (req, re
 });
 
 // --- Browse leads (joins raw_leads + enriched_contacts for display)
+// --- Create a single lead by hand (address is the only required field) -
+// available to any authenticated user, admin/manager/rep alike, since a rep
+// in the field is just as likely to need this as a manager at a desk. If a
+// rep creates it, they become the lead's owner automatically (they're the
+// one who found it); a manager/admin creating one leaves it unassigned
+// unless they explicitly pass rep_id.
+router.post('/', async (req, res) => {
+  const { address, city, state, zip, purchase_date, sale_price, owner_name, phone, email, rep_id } = req.body;
+  if (!address || !address.trim()) return res.status(400).json({ error: 'address is required' });
+
+  let assignedRepId = null;
+  if (req.user.role === 'rep') {
+    assignedRepId = req.user.id;
+  } else if (rep_id) {
+    const rep = await db('users').where({ id: rep_id, tenant_id: req.user.tenant_id, role: 'rep' }).first();
+    if (!rep) return res.status(400).json({ error: 'rep_id does not match a rep on this tenant' });
+    assignedRepId = rep_id;
+  }
+
+  const source = await (async () => {
+    const existing = await db('data_sources').where({ tenant_id: req.user.tenant_id, provider_name: 'Manual Entry' }).first();
+    if (existing) return existing;
+    const [created] = await db('data_sources')
+      .insert({ tenant_id: req.user.tenant_id, provider_name: 'Manual Entry', type: 'csv_import' })
+      .returning('*');
+    return created;
+  })();
+
+  const [rawLead] = await db('raw_leads')
+    .insert({
+      tenant_id: req.user.tenant_id,
+      source_id: source.id,
+      address: address.trim(),
+      city: city || null,
+      state: state || null,
+      zip: zip || null,
+      purchase_date: purchase_date || null,
+      sale_price: sale_price || null,
+      owner_name_raw: owner_name || null,
+      status: 'new'
+    })
+    .returning('*');
+
+  const [lead] = await db('leads')
+    .insert({
+      tenant_id: req.user.tenant_id,
+      raw_lead_id: rawLead.id,
+      disposition: 'not_contacted',
+      assigned_rep_id: assignedRepId
+    })
+    .returning('*');
+
+  if (owner_name || phone || email) {
+    await db('enriched_contacts').insert({
+      raw_lead_id: rawLead.id,
+      full_name: owner_name || null,
+      phone: phone || null,
+      email: email || null,
+      enrichment_provider: 'manual_entry',
+      enriched_at: db.fn.now()
+    });
+  }
+
+  res.status(201).json({ id: lead.id, address: rawLead.address, disposition: lead.disposition, assigned_rep_id: assignedRepId });
+});
+
+// --- View or change a lead's owner (the rep currently assigned to it,
+// independent of route membership). Admin/manager only - reassigning
+// ownership is a manager-level decision, unlike creating a lead which any
+// role can do. Send { rep_id: null } to remove the owner entirely.
+router.patch('/:id/assign', requireRole('admin', 'manager'), async (req, res) => {
+  const lead = await db('leads').where({ id: req.params.id, tenant_id: req.user.tenant_id }).first();
+  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+  const { rep_id } = req.body;
+  if (rep_id) {
+    const rep = await db('users').where({ id: rep_id, tenant_id: req.user.tenant_id, role: 'rep' }).first();
+    if (!rep) return res.status(400).json({ error: 'rep_id does not match a rep on this tenant' });
+  }
+
+  await db('leads').where({ id: lead.id }).update({ assigned_rep_id: rep_id || null });
+
+  const updated = await db('leads')
+    .where({ 'leads.id': lead.id })
+    .leftJoin('users as owner', 'leads.assigned_rep_id', 'owner.id')
+    .select('leads.id', 'leads.assigned_rep_id', 'owner.name as assigned_rep_name')
+    .first();
+
+  res.json(updated);
+});
+
 router.get('/', async (req, res) => {
   const { territory_id, disposition, status, unassigned, state, visited, has_solar, no_further_attempt, sort } = req.query;
 
@@ -374,6 +468,7 @@ router.get('/', async (req, res) => {
     .where('leads.tenant_id', req.user.tenant_id)
     .join('raw_leads', 'leads.raw_lead_id', 'raw_leads.id')
     .leftJoin('enriched_contacts', 'enriched_contacts.raw_lead_id', 'raw_leads.id')
+    .leftJoin('users as owner', 'leads.assigned_rep_id', 'owner.id')
     .select(
       'leads.id',
       'leads.disposition',
@@ -382,6 +477,8 @@ router.get('/', async (req, res) => {
       'leads.visited',
       'leads.has_solar',
       'leads.no_further_attempt',
+      'leads.assigned_rep_id',
+      'owner.name as assigned_rep_name',
       'raw_leads.address',
       'raw_leads.city',
       'raw_leads.state',
@@ -507,6 +604,7 @@ async function getLeadDetail(req, leadId) {
     .where({ 'leads.id': leadId, 'leads.tenant_id': req.user.tenant_id })
     .join('raw_leads', 'leads.raw_lead_id', 'raw_leads.id')
     .leftJoin('enriched_contacts', 'enriched_contacts.raw_lead_id', 'raw_leads.id')
+    .leftJoin('users as owner', 'leads.assigned_rep_id', 'owner.id')
     .select(
       'leads.id as id',
       'leads.tenant_id as tenant_id',
@@ -516,6 +614,8 @@ async function getLeadDetail(req, leadId) {
       'leads.visited as visited',
       'leads.has_solar as has_solar',
       'leads.no_further_attempt as no_further_attempt',
+      'leads.assigned_rep_id as assigned_rep_id',
+      'owner.name as assigned_rep_name',
       'raw_leads.address as address',
       'raw_leads.city as city',
       'raw_leads.state as state',
@@ -787,6 +887,44 @@ router.patch('/:id/contact', async (req, res) => {
     .first();
 
   res.json({ id: lead.id, ...updated });
+});
+
+// --- Generate a self-service booking link for a lead, tied to a specific
+// rep. Reps can only generate links for themselves on their own assigned
+// leads; admin/manager can generate for any rep. The link expires exactly
+// when its own booking window closes (3.5 business days from creation) -
+// no point leaving it valid once every slot in that window is gone.
+router.post('/:id/booking-link', async (req, res) => {
+  const lead = await assertLeadAccess(req, res, req.params.id);
+  if (!lead) return;
+
+  let repId;
+  if (req.user.role === 'rep') {
+    repId = req.user.id;
+  } else {
+    repId = req.body.rep_id;
+    if (!repId) return res.status(400).json({ error: 'rep_id is required when generating as a manager/admin' });
+    const rep = await db('users').where({ id: repId, tenant_id: req.user.tenant_id, role: 'rep' }).first();
+    if (!rep) return res.status(400).json({ error: 'rep_id does not match a rep on this tenant' });
+  }
+
+  const now = new Date();
+  const token = crypto.randomBytes(24).toString('hex');
+  const expiresAt = addBusinessDays(now, MAX_BUSINESS_DAYS_OUT);
+
+  const [link] = await db('booking_links')
+    .insert({
+      tenant_id: req.user.tenant_id,
+      lead_id: lead.id,
+      rep_id: repId,
+      created_by: req.user.id,
+      token,
+      expires_at: expiresAt.toISOString()
+    })
+    .returning('*');
+
+  const baseUrl = process.env.BOOKING_PAGE_URL || 'http://localhost:5175';
+  res.status(201).json({ id: link.id, token: link.token, expires_at: link.expires_at, url: `${baseUrl}/${link.token}` });
 });
 
 // --- Add a dated note to a lead's contact card. Notes are never edited or

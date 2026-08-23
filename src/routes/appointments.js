@@ -3,11 +3,10 @@ const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { addBusinessDays } = require('../lib/businessDays');
 const { generateReminderMessage } = require('../lib/busybee');
+const { MAX_BUSINESS_DAYS_OUT } = require('../lib/appointmentRules');
 
 const router = express.Router();
 router.use(requireAuth);
-
-const MAX_BUSINESS_DAYS_OUT = 3.5;
 
 async function leadIsOnRepRoute(leadId, repId) {
   const match = await db('route_stops')

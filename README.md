@@ -136,7 +136,25 @@ Opt-in, foreground-only GPS sharing — a rep toggles it on from their own app; 
 - `PATCH /api/leads/:id/contact` — edit contact info on a lead: **name, co-owner name, email, phone.** Same upsert-safe behavior as before (creates an `enriched_contacts` row if the lead was never enriched, updates in place if one exists — no duplicates). Send only the fields you're changing; send an empty string to clear a field. Replaces the old name-only `/name` endpoint entirely.
 - `GET /api/leads` now accepts `state`, `visited`, `has_solar`, `no_further_attempt` as additional filters, on top of the existing `territory_id`, `disposition`, `status`, `unassigned`. `state` matches case-insensitively; the three flags are `true`/omit (checking a box narrows to only that flag, unchecked shows both).
 - Admin UI: name is editable inline from the contact card (click "Edit" next to the name); the Leads page toolbar has a state text filter plus the three checkboxes.
-- Employee UI: name is editable the same way from the stop detail screen's contact card. The route view screen has the same state filter + three checkboxes, filtering the current route's stop list client-side (no extra API calls needed since a route's stops are already fully loaded).
+- Employee UI: name is editable the same way from the stop detail screen's contact card. The route view screen has an **outcome (disposition) dropdown** in place of a literal address-state filter — not `state` in the geographic sense, but which of the six disposition values a lead is currently at (not contacted, contacted, appointment set, sold, not interested, do not contact) — plus the same three checkboxes, filtering the current route's stop list client-side.
+
+## Single-entry lead creation, and lead ownership
+
+**Add one lead at a time, no CSV required.** `POST /api/leads` — only `address` is required. Available to admin, manager, *and* rep alike (unlike CSV import and ScoutHive import, which are admin/manager-only) — a rep in the field finding a house that isn't in the system yet doesn't need to go back to a manager to get it added.
+- Admin UI: "Add lead" button on the Leads page, opens an inline form.
+- Employee UI: **Add a Lead** (linked from the My Routes home screen) — its own small page, since the employee app doesn't have a general lead-browsing screen the way admin does.
+
+**Lead ownership ("owner")** — `leads.assigned_rep_id`, a direct concept of who currently has a lead, independent of route membership (a lead can have an owner without being on an active route right now, and doesn't lose its owner if a route gets deleted).
+- If a **rep** creates a lead via `POST /api/leads`, they become its owner automatically. If a **manager/admin** creates one, it's unassigned unless they pass `rep_id` explicitly.
+- **Auto-synced from route assignment**: assigning a route to a rep (`PATCH /routes/:id/assign`) automatically sets that rep as owner for every lead on the route — verified directly against Postgres. A manager can still override an individual lead's owner afterward without touching the route.
+- `PATCH /api/leads/:id/assign` (admin/manager only) — set or clear (`rep_id: null`) a lead's owner directly, independent of routes.
+- Visible on the Leads list ("Assigned" column) and editable right from the contact card (a dropdown showing every rep + "Unassigned").
+
+## Editing and deleting routes
+
+- `PATCH /api/routes/:id` (admin/manager) — edit name, date, or territory. Rep reassignment stays on the dedicated `/assign` endpoint, since that one also carries the lead-ownership-sync side effect described above.
+- `DELETE /api/routes/:id` (admin/manager) — deletes the route and cascades to its stops (verified zero orphaned `route_stops` rows after deletion). Does **not** touch the underlying leads' ownership — a deleted route just means those addresses aren't scheduled on that particular run anymore; ownership is separate, persistent data a manager manages on its own.
+- Admin UI: **Edit**/**Delete** buttons on the route detail page header (Delete requires a confirmation, since it's not undoable).
 
 ## CRM integration (webhooks + API keys)
 
@@ -234,19 +252,31 @@ Tested: full appointment lifecycle (book → appears in manager rollup → mark 
 
 **Known gap:** unlike lead-level BusyBee messages, using a reminder draft doesn't currently log a note on the lead the way the lead-messaging flow does — worth adding for parity if reminders turn out to be heavily used.
 
-### Part 2 (scoped, not built): self-service appointment booking page
+### Part 2: self-service appointment booking page — built
 
-A public-facing landing page where a homeowner picks a time from a rep's availability, without a rep manually creating the appointment. Scoped here rather than built, per your instruction — this is a meaningfully bigger piece than the manager/rep-driven booking above:
+The public-facing booking flow scoped above is now built. A booking link is tied to a **specific lead + rep pair** (generated from that lead's contact card, not a generic "book with anyone" page) — this keeps the abuse surface smaller than a fully open scheduler, since every link connects back to a real lead already in the system rather than accepting bookings from anyone on the internet with no context.
 
-**New surface area needed:**
-- A public (unauthenticated) route, e.g. `routehive.app/book/:repId` or a per-tenant branded link — this is the first genuinely public-facing page in the app; everything else requires a login.
-- Rep availability model — a new table/UI for a rep (or manager, for all reps) to define recurring weekly availability windows (e.g. "Mon/Wed/Fri 9am-4pm"), plus the ability to block out specific days off.
-- Real-time conflict checking against already-booked appointments — the self-service picker needs to only show genuinely open slots, which means querying existing appointments live as the page renders, not just showing raw availability.
-- Same 3.5-business-day cap would need to apply here too, presumably, unless self-service bookings get their own window.
-- A booking confirmation flow for the homeowner (their own email/phone captured at booking time — this is the one place in the app where a *lead*, not a rep, would be providing contact info directly, which has different validation/spam-prevention needs than everything built so far, e.g. some kind of confirmation step or rate limiting to stop the page from being spammed with fake bookings).
-- Notification back to the rep/manager when a self-service booking comes in.
+**New pieces:**
+- `rep_availability` — reps set their own recurring weekly windows (day of week + start/end time) via **My Availability** in the employee app. `src/routes/availability.js`.
+- `booking_links` — a random opaque token (not a guessable sequential ID), tied to one lead and one rep, expiring exactly when its own 3.5-business-day booking window closes. Generated from the **"Self-service link"** button on the contact card, both apps — copies to clipboard automatically.
+- `src/lib/availabilitySlots.js` — the actual slot-generation logic: rep's weekly windows minus already-booked appointments, in 30-minute increments. **Tested thoroughly in isolation** before anything was built on top of it: correct slot counts, a longer (90-min) appointment correctly blocking all overlapping half-hour slots (not just the one it starts in), and no slots ever generated in the past.
+- `src/middleware/publicRateLimit.js` — basic in-memory, per-IP rate limiting (20 requests/15 min) on the public endpoints, since this is the first unauthenticated surface in the app. **Honestly limited**, documented in the file itself: resets on redeploy, doesn't share state across multiple instances, and isn't a substitute for a real service (Cloudflare Turnstile, hCaptcha) if abuse ever becomes a real problem.
+- A honeypot field (`website`) on the public booking form — invisible to real users via CSS, not `display:none` (some bots specifically skip that). If filled, the booking silently fake-succeeds rather than telling a bot its submission was rejected.
+- **A fourth deployable app** (`booking/`) — a minimal, unauthenticated, mobile-first page. No login, no sidebar, just the RouteHive brand and a slot picker. Runs as its own Railway service (see deploy steps below).
 
-**Rough effort relative to what's already built:** bigger than any single feature built this session — it's not just new endpoints, it's a new *kind* of surface (public, no auth, homeowner-facing) with its own trust/abuse considerations the rest of this app hasn't needed to deal with. Worth scoping as its own focused pass rather than folding into a broader turn.
+**The booking window is anchored to when the link was created, not when the homeowner opens it** — same anti-extension principle used for rep-rescheduled appointments. Waiting three days to open the link doesn't push the deadline back.
+
+**Tested end to end against Postgres, with zero authentication on the public side** (verified the public endpoints work with no auth header at all, as a real homeowner would experience it):
+- Full flow: rep sets availability → generates a link for a specific lead → public slot listing works with no login → booking succeeds → link becomes unusable on reuse (410 on a second attempt)
+- **Double-booking prevented at two levels**: two different homeowners' links for the *same rep* can't claim the same slot — a direct conflict attempt returns 409, and the slot immediately stops appearing in anyone else's available list the moment it's taken
+- Honeypot verified: a bot-shaped submission (the hidden field filled in) fake-succeeds without anything actually being booked — confirmed the slot count was unchanged afterward
+- Homeowner-provided contact info (name/email/phone) correctly saves to the lead using the same upsert-safe pattern as the rest of the app — no duplicate contact records
+- Rate limiter tested in isolation: exactly 20 requests allowed per IP per window, the 21st blocked, a different IP unaffected
+
+**Known gaps, honestly:**
+- No way to block out specific one-off days off yet (only recurring weekly windows) — a rep on vacation would need to temporarily delete their windows rather than mark specific dates unavailable.
+- No notification back to the rep/manager when a self-service booking comes in — they'd need to check the appointments list to notice. Worth adding (an email, or surfacing it more prominently in the rollup) if this gets real usage.
+- Admin has no availability-management UI of its own yet — a manager can view a rep's hours via the API but can't set them on a rep's behalf from the admin app; only the rep can set their own via My Availability.
 
 ## Deploying to Railway
 
@@ -259,6 +289,7 @@ A public-facing landing page where a homeowner picks a time from a rep's availab
 5. Railway will run `npm install` automatically. The included `Procfile` (`web: npm run migrate && npm start`) runs migrations against the Postgres database on every deploy before starting the server, so schema stays in sync — same pattern you likely used on HourHive.
 6. Once deployed, hit `POST /api/auth/register-tenant` against your Railway URL to create your first real tenant/admin, the same way you'd have bootstrapped HourHive.
 7. Deploy the admin dashboard and rep PWA as separate Railway services pointing at this API's URL, same two-app pattern as HourHive.
+8. Deploy the `booking/` app the same way — a third frontend service, root directory `booking`, same `VITE_API_URL` pointing at the API. Set `BOOKING_PAGE_URL` on the **API service** to this app's public Railway URL, so generated booking links point at the right place instead of `localhost:5175`.
 
 ## What's deliberately not built yet
 

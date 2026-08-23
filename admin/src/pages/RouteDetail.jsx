@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout.jsx';
 import ContactCard from '../components/ContactCard.jsx';
 import RouteMap from '../components/RouteMap.jsx';
@@ -15,9 +15,15 @@ const OUTCOME_LABEL = {
 
 export default function RouteDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [route, setRoute] = useState(null);
   const [reps, setReps] = useState([]);
   const [error, setError] = useState(null);
+  const [editingRoute, setEditingRoute] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [dateDraft, setDateDraft] = useState('');
+  const [savingRoute, setSavingRoute] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [selectedRep, setSelectedRep] = useState('');
   const [openLeadId, setOpenLeadId] = useState(null);
@@ -52,6 +58,40 @@ export default function RouteDetail() {
     }
   }
 
+  function startEditing() {
+    setNameDraft(route.name);
+    setDateDraft(route.date ? route.date.slice(0, 10) : '');
+    setEditingRoute(true);
+  }
+
+  async function saveRoute(e) {
+    e.preventDefault();
+    setSavingRoute(true);
+    setError(null);
+    try {
+      const updated = await api.updateRoute(id, { name: nameDraft, date: dateDraft });
+      setRoute((prev) => ({ ...prev, ...updated }));
+      setEditingRoute(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingRoute(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Delete "${route.name}"? This removes all its stops. This can't be undone.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.deleteRoute(id);
+      navigate('/routes');
+    } catch (err) {
+      setError(err.message);
+      setDeleting(false);
+    }
+  }
+
   if (!route) {
     return (
       <Layout>
@@ -65,17 +105,46 @@ export default function RouteDetail() {
   return (
     <Layout>
       <div className="page-header">
-        <div>
-          <h1>{route.name}</h1>
-          <div className="subtitle mono">
-            {route.date} · {route.stops.length} stops · {route.status}
-            {route.build_mode && route.build_mode !== 'manual' && (
-              <> · {route.build_mode === 'radius' ? `${route.radius_miles}mi radius` : 'optimized path'} · ~{route.estimated_distance_miles}mi</>
-            )}
-          </div>
-          {route.start_label && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-              {route.start_label}{route.end_label && route.end_label !== route.start_label ? ` → ${route.end_label}` : ' (round trip)'}
+        <div style={{ width: '100%' }}>
+          {editingRoute ? (
+            <form onSubmit={saveRoute} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div className="field" style={{ marginBottom: 0, flex: 1, minWidth: 200 }}>
+                <label>Name</label>
+                <input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} required />
+              </div>
+              <div className="field" style={{ marginBottom: 0, width: 160 }}>
+                <label>Date</label>
+                <input type="date" value={dateDraft} onChange={(e) => setDateDraft(e.target.value)} required />
+              </div>
+              <button className="btn btn-amber" type="submit" disabled={savingRoute}>
+                {savingRoute ? 'Saving…' : 'Save'}
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setEditingRoute(false)} disabled={savingRoute}>
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h1>{route.name}</h1>
+                <div className="subtitle mono">
+                  {route.date} · {route.stops.length} stops · {route.status}
+                  {route.build_mode && route.build_mode !== 'manual' && (
+                    <> · {route.build_mode === 'radius' ? `${route.radius_miles}mi radius` : 'optimized path'} · ~{route.estimated_distance_miles}mi</>
+                  )}
+                </div>
+                {route.start_label && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                    {route.start_label}{route.end_label && route.end_label !== route.start_label ? ` → ${route.end_label}` : ' (round trip)'}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-ghost btn-sm" onClick={startEditing}>Edit</button>
+                <button className="btn btn-ghost btn-sm" onClick={handleDelete} disabled={deleting} style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>
+                  {deleting ? 'Deleting…' : 'Delete'}
+                </button>
+              </div>
             </div>
           )}
         </div>

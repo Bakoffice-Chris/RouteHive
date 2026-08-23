@@ -29,6 +29,8 @@ export const api = {
     const qs = new URLSearchParams(params).toString();
     return request(`/api/leads${qs ? `?${qs}` : ''}`);
   },
+  createLead: (payload) => request('/api/leads', { method: 'POST', body: JSON.stringify(payload) }),
+  assignLeadOwner: (id, repId) => request(`/api/leads/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ rep_id: repId }) }),
   importCsv: (file) => {
     const form = new FormData();
     form.append('file', file);
@@ -55,6 +57,8 @@ export const api = {
     request(`/api/routes/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ rep_id }) }),
   reorderStops: (id, stop_ids_in_order) =>
     request(`/api/routes/${id}/reorder`, { method: 'PATCH', body: JSON.stringify({ stop_ids_in_order }) }),
+  updateRoute: (id, payload) => request(`/api/routes/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteRoute: (id) => request(`/api/routes/${id}`, { method: 'DELETE' }),
 
   getUsers: (role) => request(`/api/users${role ? `?role=${role}` : ''}`),
   createUser: (payload) => request('/api/users', { method: 'POST', body: JSON.stringify(payload) }),
@@ -112,7 +116,13 @@ export const api = {
   },
   createAppointment: (payload) => request('/api/appointments', { method: 'POST', body: JSON.stringify(payload) }),
   updateAppointment: (id, payload) => request(`/api/appointments/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
-  getAppointmentReminder: (id, type, channel) => request(`/api/appointments/${id}/reminder?type=${type}&channel=${channel}`)
+  getAppointmentReminder: (id, type, channel) => request(`/api/appointments/${id}/reminder?type=${type}&channel=${channel}`),
+
+  getAvailability: (repId) => request(`/api/availability${repId ? `?rep_id=${repId}` : ''}`),
+  addAvailability: (payload) => request('/api/availability', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteAvailability: (id) => request(`/api/availability/${id}`, { method: 'DELETE' }),
+  createBookingLink: (leadId, repId) =>
+    request(`/api/leads/${leadId}/booking-link`, { method: 'POST', body: JSON.stringify(repId ? { rep_id: repId } : {}) })
 };
 
 export { getToken };

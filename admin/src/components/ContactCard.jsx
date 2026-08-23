@@ -20,7 +20,11 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
   const [apptNotes, setApptNotes] = useState('');
   const [savingAppt, setSavingAppt] = useState(false);
   const [apptResult, setApptResult] = useState(null);
+  const [bookingLink, setBookingLink] = useState(null);
+  const [gettingLink, setGettingLink] = useState(false);
+  const [linkRepId, setLinkRepId] = useState('');
   const [reps, setReps] = useState([]);
+  const [savingOwner, setSavingOwner] = useState(false);
 
   async function load() {
     setError(null);
@@ -55,6 +59,37 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
       setError(err.message);
     } finally {
       setSavingAppt(false);
+    }
+  }
+
+  async function getBookingLink() {
+    if (!linkRepId) return;
+    setGettingLink(true);
+    setError(null);
+    try {
+      const link = await api.createBookingLink(leadId, linkRepId);
+      setBookingLink(link);
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(link.url).catch(() => {});
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGettingLink(false);
+    }
+  }
+
+  async function changeOwner(repId) {
+    setSavingOwner(true);
+    setError(null);
+    try {
+      const updated = await api.assignLeadOwner(leadId, repId || null);
+      setLead((prev) => ({ ...prev, assigned_rep_id: updated.assigned_rep_id, assigned_rep_name: updated.assigned_rep_name }));
+      onChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingOwner(false);
     }
   }
 
@@ -240,6 +275,19 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
 
             {error && <div className="error-banner">{error}</div>}
 
+            <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Owner:</span>
+              <select
+                value={lead.assigned_rep_id || ''}
+                onChange={(e) => changeOwner(e.target.value)}
+                disabled={savingOwner}
+                style={{ padding: '4px 8px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 13 }}
+              >
+                <option value="">Unassigned</option>
+                {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+
             <div className="checkflag-row">
               <label className={`checkflag ${lead.visited ? 'checked' : ''}`}>
                 <input type="checkbox" checked={lead.visited} disabled={savingFlag === 'visited'} onChange={() => toggleFlag('visited')} />
@@ -262,9 +310,25 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
                   Booked for {new Date(apptResult.scheduled_at).toLocaleString()}
                 </div>
               )}
-              {!showApptForm ? (
-                <button className="btn btn-ghost btn-sm" onClick={() => setShowApptForm(true)}>Schedule appointment</button>
-              ) : (
+              {bookingLink && (
+                <div style={{ fontSize: 12, marginBottom: 10, wordBreak: 'break-all' }}>
+                  <div style={{ color: 'var(--green)', marginBottom: 2 }}>Link copied to clipboard:</div>
+                  <div className="mono" style={{ color: 'var(--text-muted)' }}>{bookingLink.url}</div>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, marginBottom: showApptForm ? 12 : 0, flexWrap: 'wrap', alignItems: 'center' }}>
+                {!showApptForm && (
+                  <button className="btn btn-ghost btn-sm" onClick={() => setShowApptForm(true)}>Schedule appointment</button>
+                )}
+                <select value={linkRepId} onChange={(e) => setLinkRepId(e.target.value)} style={{ padding: '6px 8px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 12 }}>
+                  <option value="">Rep for link…</option>
+                  {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+                <button className="btn btn-ghost btn-sm" onClick={getBookingLink} disabled={!linkRepId || gettingLink}>
+                  {gettingLink ? '…' : 'Self-service link'}
+                </button>
+              </div>
+              {showApptForm && (
                 <form onSubmit={bookAppointment}>
                   <div className="field">
                     <label>Rep</label>

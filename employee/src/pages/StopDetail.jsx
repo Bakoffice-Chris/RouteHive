@@ -22,6 +22,8 @@ export default function StopDetail() {
   const [apptNotes, setApptNotes] = useState('');
   const [savingAppt, setSavingAppt] = useState(false);
   const [apptResult, setApptResult] = useState(null);
+  const [bookingLink, setBookingLink] = useState(null);
+  const [gettingLink, setGettingLink] = useState(false);
   const [error, setError] = useState(null);
   const [checkingIn, setCheckingIn] = useState(false);
   const [loggingOutcome, setLoggingOutcome] = useState(false);
@@ -185,6 +187,22 @@ export default function StopDetail() {
     }
   }
 
+  async function getBookingLink() {
+    setGettingLink(true);
+    setError(null);
+    try {
+      const link = await api.createBookingLink(lead.id);
+      setBookingLink(link);
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(link.url).catch(() => {});
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGettingLink(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <TopBar back title="Route" />
@@ -295,8 +313,19 @@ export default function StopDetail() {
                   Booked for {new Date(apptResult.scheduled_at).toLocaleString()}
                 </div>
               )}
+              {bookingLink && (
+                <div style={{ fontSize: 13, marginBottom: 8, wordBreak: 'break-all' }}>
+                  <div style={{ color: 'var(--green)', marginBottom: 2 }}>Link copied — share it with the homeowner:</div>
+                  <div className="mono" style={{ color: 'var(--text-muted)' }}>{bookingLink.url}</div>
+                </div>
+              )}
               {!showApptForm ? (
-                <button className="btn btn-outline" onClick={() => setShowApptForm(true)}>Schedule appointment</button>
+                <div className="btn-row">
+                  <button className="btn btn-outline" onClick={() => setShowApptForm(true)}>Schedule appointment</button>
+                  <button className="btn btn-outline" onClick={getBookingLink} disabled={gettingLink}>
+                    {gettingLink ? '…' : 'Self-service link'}
+                  </button>
+                </div>
               ) : (
                 <form onSubmit={bookAppointment}>
                   <div className="field">

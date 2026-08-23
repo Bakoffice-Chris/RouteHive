@@ -35,8 +35,14 @@ export default function MyRoutes() {
           {routes.length} assigned
         </div>
 
-        <Link to="/appointments" className="btn btn-outline" style={{ marginBottom: 20, display: 'flex' }}>
+        <Link to="/add-lead" className="btn btn-amber" style={{ marginBottom: 12, display: 'flex' }}>
+          Add a Lead
+        </Link>
+        <Link to="/appointments" className="btn btn-outline" style={{ marginBottom: 12, display: 'flex' }}>
           My Appointments
+        </Link>
+        <Link to="/availability" className="btn btn-outline" style={{ marginBottom: 20, display: 'flex' }}>
+          My Availability
         </Link>
 
         {error && <div className="error-banner">{error}</div>}
