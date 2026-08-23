@@ -4,6 +4,7 @@ const { parse } = require('csv-parse/sync');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { syncMaricopaCounty } = require('../jobs/syncMaricopaCounty');
+const { generateBrief, generateMessageDraft } = require('../lib/busybee');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -80,6 +81,71 @@ router.post('/import-csv', requireRole('admin', 'manager'), upload.single('file'
   res.status(201).json({ imported: rowsToInsert.length, source_id: source.id });
 });
 
+// --- Import historical notes/records onto EXISTING addresses (matched by
+// address text), rather than creating new leads. CSV columns: address, note,
+// date (optional - defaults to today if omitted). Addresses that don't match
+// any existing lead are skipped and reported back, not silently dropped.
+router.post('/import-notes', requireRole('admin', 'manager'), upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded (field name: file)' });
+
+  let records;
+  try {
+    records = parse(req.file.buffer, { columns: true, skip_empty_lines: true, trim: true });
+  } catch (err) {
+    return res.status(400).json({ error: `Could not parse CSV: ${err.message}` });
+  }
+
+  if (records.length === 0) return res.status(400).json({ error: 'CSV had no rows' });
+
+  const missingFields = records.filter((r) => !r.address || !r.note);
+  if (missingFields.length > 0) {
+    return res.status(400).json({ error: `${missingFields.length} row(s) missing 'address' or 'note'` });
+  }
+
+  let imported = 0;
+  const skippedAddresses = [];
+
+  for (const record of records) {
+    const match = await db('leads')
+      .where('leads.tenant_id', req.user.tenant_id)
+      .join('raw_leads', 'leads.raw_lead_id', 'raw_leads.id')
+      .whereRaw('LOWER(TRIM(raw_leads.address)) = LOWER(TRIM(?))', [record.address])
+      .select('leads.id')
+      .first();
+
+    if (!match) {
+      skippedAddresses.push(record.address);
+      continue;
+    }
+
+    const noteRow = {
+      tenant_id: req.user.tenant_id,
+      lead_id: match.id,
+      author_id: req.user.id,
+      body: record.note
+    };
+    // Only override created_at if a date was actually provided - otherwise
+    // let the column's own default (now) apply.
+    if (record.date) noteRow.created_at = record.date;
+
+    await db('lead_notes').insert(noteRow);
+    imported++;
+  }
+
+  await db('audit_logs').insert({
+    tenant_id: req.user.tenant_id,
+    user_id: req.user.id,
+    action: 'notes_import',
+    details: `Imported ${imported} notes from ${req.file.originalname}, ${skippedAddresses.length} addresses not matched`
+  });
+
+  res.status(201).json({
+    imported,
+    skipped_count: skippedAddresses.length,
+    skipped_addresses: skippedAddresses.slice(0, 20) // cap the list so a bad file doesn't dump thousands of rows back
+  });
+});
+
 // --- Sync new-sale parcels from Maricopa County Assessor's public API.
 // searchTerm can be a zip code, subdivision name, or area - whatever the
 // county's /search/property endpoint accepts.
@@ -110,7 +176,7 @@ router.post('/sync-maricopa', requireRole('admin', 'manager'), async (req, res) 
 
 // --- Browse leads (joins raw_leads + enriched_contacts for display)
 router.get('/', async (req, res) => {
-  const { territory_id, disposition, status, unassigned } = req.query;
+  const { territory_id, disposition, status, unassigned, state, visited, has_solar, no_further_attempt } = req.query;
 
   let query = db('leads')
     .where('leads.tenant_id', req.user.tenant_id)
@@ -140,6 +206,10 @@ router.get('/', async (req, res) => {
   if (territory_id) query = query.where('leads.territory_id', territory_id);
   if (disposition) query = query.where('leads.disposition', disposition);
   if (status) query = query.where('raw_leads.status', status);
+  if (state) query = query.whereRaw('UPPER(raw_leads.state) = UPPER(?)', [state]);
+  if (visited === 'true') query = query.where('leads.visited', true);
+  if (has_solar === 'true') query = query.where('leads.has_solar', true);
+  if (no_further_attempt === 'true') query = query.where('leads.no_further_attempt', true);
   if (unassigned === 'true') {
     query = query.whereNotExists(function () {
       this.select('*').from('route_stops').whereRaw('route_stops.lead_id = leads.id');
@@ -150,9 +220,72 @@ router.get('/', async (req, res) => {
   res.json(leads);
 });
 
-router.get('/:id', async (req, res) => {
+// --- Export all leads as a CSV download. Must be defined before GET /:id
+// so Express doesn't try to match "export" as a lead id.
+function csvEscape(value) {
+  if (value === null || value === undefined) return '';
+  // Postgres returns date columns as JS Date objects; SQLite returns
+  // strings already. Normalize both to a plain YYYY-MM-DD instead of
+  // letting a Date object stringify to its verbose default format.
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+  const str = String(value);
+  if (/[",\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+router.get('/export', requireRole('admin', 'manager'), async (req, res) => {
+  const leads = await db('leads')
+    .where('leads.tenant_id', req.user.tenant_id)
+    .join('raw_leads', 'leads.raw_lead_id', 'raw_leads.id')
+    .leftJoin('enriched_contacts', 'enriched_contacts.raw_lead_id', 'raw_leads.id')
+    .select(
+      'raw_leads.address',
+      'raw_leads.city',
+      'raw_leads.state',
+      'raw_leads.zip',
+      'raw_leads.purchase_date',
+      'raw_leads.sale_price',
+      'enriched_contacts.full_name',
+      'enriched_contacts.phone',
+      'enriched_contacts.email',
+      'leads.disposition',
+      'leads.visited',
+      'leads.has_solar',
+      'leads.no_further_attempt'
+    )
+    .orderBy('raw_leads.purchase_date', 'desc');
+
+  const headers = [
+    'address',
+    'city',
+    'state',
+    'zip',
+    'purchase_date',
+    'sale_price',
+    'full_name',
+    'phone',
+    'email',
+    'disposition',
+    'visited',
+    'has_solar',
+    'no_further_attempt'
+  ];
+
+  const rows = leads.map((lead) => headers.map((h) => csvEscape(lead[h])).join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="routehive-leads-export-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
+});
+
+async function getLeadDetail(req, leadId) {
   const lead = await db('leads')
-    .where({ 'leads.id': req.params.id, 'leads.tenant_id': req.user.tenant_id })
+    .where({ 'leads.id': leadId, 'leads.tenant_id': req.user.tenant_id })
     .join('raw_leads', 'leads.raw_lead_id', 'raw_leads.id')
     .leftJoin('enriched_contacts', 'enriched_contacts.raw_lead_id', 'raw_leads.id')
     .select(
@@ -180,11 +313,11 @@ router.get('/:id', async (req, res) => {
     )
     .first();
 
-  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+  if (!lead) return null;
 
   if (req.user.role === 'rep') {
     const onAssignedRoute = await leadIsOnRepRoute(lead.id, req.user.id);
-    if (!onAssignedRoute) return res.status(403).json({ error: 'Not one of your assigned stops' });
+    if (!onAssignedRoute) return 'forbidden';
   }
 
   const notes = await db('lead_notes')
@@ -193,13 +326,63 @@ router.get('/:id', async (req, res) => {
     .select('lead_notes.id', 'lead_notes.body', 'lead_notes.created_at', 'users.name as author_name')
     .orderBy('lead_notes.created_at', 'desc');
 
-  res.json({
+  return {
     ...lead,
     visited: !!lead.visited,
     has_solar: !!lead.has_solar,
     no_further_attempt: !!lead.no_further_attempt,
     notes
-  });
+  };
+}
+
+router.get('/:id', async (req, res) => {
+  const lead = await getLeadDetail(req, req.params.id);
+  if (lead === null) return res.status(404).json({ error: 'Lead not found' });
+  if (lead === 'forbidden') return res.status(403).json({ error: 'Not one of your assigned stops' });
+  res.json(lead);
+});
+
+// --- BusyBee pre-visit brief. Generated fresh each call, not cached - fine
+// for now given Haiku's cost, but worth adding a short-TTL cache if this
+// gets called often for the same lead (e.g. a rep reopening the same stop).
+router.get('/:id/brief', async (req, res) => {
+  const lead = await getLeadDetail(req, req.params.id);
+  if (lead === null) return res.status(404).json({ error: 'Lead not found' });
+  if (lead === 'forbidden') return res.status(403).json({ error: 'Not one of your assigned stops' });
+
+  try {
+    const brief = await generateBrief(lead);
+    res.json({ brief });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// --- BusyBee message draft (email or text). Generates text only - never
+// sends anything. The UI hands the result to the device's native Mail or
+// Messages app for the rep to review and send themselves.
+router.get('/:id/draft', async (req, res) => {
+  const lead = await getLeadDetail(req, req.params.id);
+  if (lead === null) return res.status(404).json({ error: 'Lead not found' });
+  if (lead === 'forbidden') return res.status(403).json({ error: 'Not one of your assigned stops' });
+
+  const { channel } = req.query;
+  if (channel !== 'email' && channel !== 'text') {
+    return res.status(400).json({ error: "channel must be 'email' or 'text'" });
+  }
+  if (channel === 'email' && !lead.email) {
+    return res.status(400).json({ error: 'This lead has no email on file' });
+  }
+  if (channel === 'text' && !lead.phone) {
+    return res.status(400).json({ error: 'This lead has no phone number on file' });
+  }
+
+  try {
+    const draft = await generateMessageDraft(lead, channel, req.user.name);
+    res.json({ channel, ...draft, recipient_email: lead.email, recipient_phone: lead.phone });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // --- Rep access to a lead is scoped to stops on routes assigned to them.
@@ -252,6 +435,37 @@ router.patch('/:id/flags', async (req, res) => {
     has_solar: !!updated.has_solar,
     no_further_attempt: !!updated.no_further_attempt
   });
+});
+
+// --- Edit the homeowner name on a lead's contact card. This works whether
+// or not the lead has ever been through enrichment - if there's no
+// enriched_contacts row yet (common for CSV-imported or un-enriched leads),
+// one is created with just the name set; if a row already exists, it's
+// updated in place rather than creating a duplicate.
+router.patch('/:id/name', async (req, res) => {
+  const lead = await assertLeadAccess(req, res, req.params.id);
+  if (!lead) return;
+
+  const { full_name } = req.body;
+  if (typeof full_name !== 'string' || !full_name.trim()) {
+    return res.status(400).json({ error: 'full_name is required' });
+  }
+  const trimmedName = full_name.trim();
+
+  const existing = await db('enriched_contacts').where({ raw_lead_id: lead.raw_lead_id }).first();
+
+  if (existing) {
+    await db('enriched_contacts').where({ id: existing.id }).update({ full_name: trimmedName });
+  } else {
+    await db('enriched_contacts').insert({
+      raw_lead_id: lead.raw_lead_id,
+      full_name: trimmedName,
+      enrichment_provider: 'manual_edit',
+      enriched_at: db.fn.now()
+    });
+  }
+
+  res.json({ id: lead.id, full_name: trimmedName });
 });
 
 // --- Add a dated note to a lead's contact card. Notes are never edited or

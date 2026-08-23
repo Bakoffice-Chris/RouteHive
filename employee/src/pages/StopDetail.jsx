@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import TopBar from '../components/TopBar.jsx';
+import BusyBeePanel from '../components/BusyBeePanel.jsx';
 import { api } from '../api.js';
 import { getDirectionsUrl } from '../lib/navigation.js';
 
@@ -22,6 +23,9 @@ export default function StopDetail() {
   const [savingFlag, setSavingFlag] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [savingName, setSavingName] = useState(false);
 
   async function load() {
     setError(null);
@@ -99,6 +103,27 @@ export default function StopDetail() {
     }
   }
 
+  function startEditingName() {
+    setNameDraft(lead.full_name || '');
+    setEditingName(true);
+  }
+
+  async function saveName(e) {
+    e.preventDefault();
+    if (!nameDraft.trim()) return;
+    setSavingName(true);
+    setError(null);
+    try {
+      await api.updateLeadName(lead.id, nameDraft.trim());
+      setLead((prev) => ({ ...prev, full_name: nameDraft.trim() }));
+      setEditingName(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingName(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <TopBar back title="Route" />
@@ -112,9 +137,29 @@ export default function StopDetail() {
             <div className="detail-header">
               <div className="detail-address">{stop.address}</div>
               <div className="detail-sub">{stop.city}, {stop.state} {stop.zip}</div>
-              {(lead.full_name || lead.phone || lead.email) && (
+              {editingName ? (
+                <form onSubmit={saveName} style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <input
+                    autoFocus
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    placeholder="Homeowner name"
+                    style={{ flex: 1, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 4, fontSize: 15 }}
+                  />
+                  <button className="btn btn-amber" type="submit" disabled={savingName || !nameDraft.trim()} style={{ width: 'auto', padding: '0 14px' }}>
+                    {savingName ? '…' : 'Save'}
+                  </button>
+                </form>
+              ) : (
+                <div className="detail-contact" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {lead.full_name ? <span>{lead.full_name}</span> : <span style={{ color: 'var(--text-muted)' }}>No name on file</span>}
+                  <button className="btn btn-outline" onClick={startEditingName} style={{ width: 'auto', minHeight: 'auto', padding: '3px 10px', fontSize: 12 }}>
+                    Edit
+                  </button>
+                </div>
+              )}
+              {(lead.phone || lead.email) && (
                 <div className="detail-contact">
-                  {lead.full_name && <div>{lead.full_name}</div>}
                   {lead.phone && <div>{lead.phone}</div>}
                   {lead.email && <div>{lead.email}</div>}
                 </div>
@@ -128,6 +173,15 @@ export default function StopDetail() {
                   Navigate
                 </a>
               )}
+            </div>
+
+            <div className="section">
+              <BusyBeePanel
+                leadId={lead.id}
+                leadEmail={lead.email}
+                leadPhone={lead.phone}
+                onNoteSaved={(note) => setLead((prev) => ({ ...prev, notes: [note, ...prev.notes] }))}
+              />
             </div>
 
             <div className="section">

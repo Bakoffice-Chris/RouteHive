@@ -28,8 +28,15 @@ export const api = {
     request(`/api/stops/${id}/outcome`, { method: 'PATCH', body: JSON.stringify({ outcome, rep_notes }) }),
 
   getLead: (id) => request(`/api/leads/${id}`),
+  getLeadBrief: (id) => request(`/api/leads/${id}/brief`),
+  getLeadDraft: (id, channel) => request(`/api/leads/${id}/draft?channel=${channel}`),
   updateLeadFlags: (id, flags) => request(`/api/leads/${id}/flags`, { method: 'PATCH', body: JSON.stringify(flags) }),
-  addLeadNote: (id, body) => request(`/api/leads/${id}/notes`, { method: 'POST', body: JSON.stringify({ body }) })
+  updateLeadName: (id, full_name) => request(`/api/leads/${id}/name`, { method: 'PATCH', body: JSON.stringify({ full_name }) }),
+  addLeadNote: (id, body) => request(`/api/leads/${id}/notes`, { method: 'POST', body: JSON.stringify({ body }) }),
+
+  updateMyLocation: (lat, lng) =>
+    request('/api/users/me/location', { method: 'PATCH', body: JSON.stringify({ lat, lng }) }),
+  disableMyLocation: () => request('/api/users/me/location/disable', { method: 'PATCH' })
 };
 
 export { getToken };

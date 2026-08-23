@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import BusyBeePanel from './BusyBeePanel.jsx';
 
 export default function ContactCard({ leadId, onClose, onChanged }) {
   const [lead, setLead] = useState(null);
@@ -7,6 +8,9 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
   const [savingFlag, setSavingFlag] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [savingName, setSavingName] = useState(false);
 
   async function load() {
     setError(null);
@@ -55,6 +59,28 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
     }
   }
 
+  function startEditingName() {
+    setNameDraft(lead.full_name || '');
+    setEditingName(true);
+  }
+
+  async function saveName(e) {
+    e.preventDefault();
+    if (!nameDraft.trim()) return;
+    setSavingName(true);
+    setError(null);
+    try {
+      await api.updateLeadName(leadId, nameDraft.trim());
+      setLead((prev) => ({ ...prev, full_name: nameDraft.trim() }));
+      setEditingName(false);
+      onChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingName(false);
+    }
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
@@ -73,7 +99,30 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
             </div>
 
             <div style={{ fontSize: 14, marginBottom: 16 }}>
-              <div><strong>{lead.full_name || 'Not enriched'}</strong></div>
+              {editingName ? (
+                <form onSubmit={saveName} style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    autoFocus
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    placeholder="Homeowner name"
+                    style={{ flex: 1, padding: '6px 10px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 14 }}
+                  />
+                  <button className="btn btn-amber btn-sm" type="submit" disabled={savingName || !nameDraft.trim()}>
+                    {savingName ? '…' : 'Save'}
+                  </button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingName(false)} disabled={savingName}>
+                    Cancel
+                  </button>
+                </form>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <strong>{lead.full_name || 'Not enriched'}</strong>
+                  <button className="btn btn-ghost btn-sm" onClick={startEditingName} style={{ padding: '2px 8px', fontSize: 11 }}>
+                    Edit
+                  </button>
+                </div>
+              )}
               {(lead.phone || lead.email) && (
                 <div className="mono" style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                   {lead.phone && <div>{lead.phone}</div>}
@@ -98,6 +147,13 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
                 No further attempt
               </label>
             </div>
+
+            <BusyBeePanel
+              leadId={leadId}
+              leadEmail={lead.email}
+              leadPhone={lead.phone}
+              onNoteSaved={(note) => setLead((prev) => ({ ...prev, notes: [note, ...prev.notes] }))}
+            />
 
             <h3 style={{ margin: '20px 0 10px' }}>Notes</h3>
             <form onSubmit={submitNote} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>

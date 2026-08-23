@@ -5,7 +5,8 @@ import { useAuth } from '../auth.jsx';
 const NAV_ITEMS = [
   { to: '/leads', label: 'Leads' },
   { to: '/routes', label: 'Routes' },
-  { to: '/team', label: 'Team' }
+  { to: '/team', label: 'Team' },
+  { to: '/integrations', label: 'Integrations' }
 ];
 
 export default function Sidebar() {

@@ -84,6 +84,74 @@ For anything beyond light testing, move this off the synchronous request path �
 
 This only pulls address, owner name, sale date/price, and parcel number — no phone/email. That's a separate enrichment step (still a TODO — see the spec).
 
+## Team management
+
+- `PATCH /api/users/:id` (admin/manager) — edit name, email, role, active status, and optionally reset a password. Send only the fields you're changing.
+- Deactivating a user (`active: false`) blocks their login immediately — checked in `POST /api/auth/login`. It does not delete their account or history, just blocks sign-in.
+- Admin UI: Team page now has an "Edit" button per person opening a modal with these fields.
+
+## Notes import and lead export
+
+- `POST /api/leads/import-notes` (admin/manager) — CSV with columns `address, note, date` (date optional, defaults to today). Matches existing leads by address (case/whitespace-insensitive), adds a dated note to each match, and reports which addresses didn't match anything rather than silently dropping them.
+- `GET /api/leads/export` (admin/manager) — downloads all of the tenant's leads as a CSV (address, contact info, disposition, flags). Admin UI: "Export CSV" button on the Leads page.
+
+## Rep location sharing
+
+Opt-in, foreground-only GPS sharing — a rep toggles it on from their own app; it is never on by default and is never something a manager can turn on remotely.
+
+- `PATCH /api/users/me/location` — rep sends their own current lat/lng.
+- `PATCH /api/users/me/location/disable` — rep turns it off; this also clears the stored point rather than just pausing updates.
+- `GET /api/users` (admin/manager) — now includes `last_lat`, `last_lng`, `last_location_at`, `location_sharing_enabled` for each rep.
+- Admin UI: Team page has a live map showing only reps currently sharing.
+- Employee UI: a toggle in the top bar ("Location on"/"Location off").
+
+**Why foreground-only, and why that's a real limit, not just a design choice:** this is a browser-based PWA, not a native app — it has no way to request background-location permission or run anything once the tab/app is closed. Location updates only happen while the app is open in the foreground and the toggle is on. If you need true background tracking later, that requires wrapping this in a native shell (e.g., Capacitor) and requesting the OS-level background location permission, which is a meaningfully bigger step with its own platform review requirements (both Apple and Google scrutinize background-location apps).
+
+**Worth knowing before relying on this for real employees:** many US states have specific notice/consent requirements for employer GPS tracking of employees, and some restrict tracking to work hours only. This build doesn't include any of that compliance layer (consent logging, work-hours-only enforcement, a privacy policy) — the opt-in toggle is a reasonable default, not a substitute for checking what your state requires before rolling this out.
+
+## Editing homeowner names, and filtering leads
+
+- `PATCH /api/leads/:id/name` — edit the homeowner name on a lead. Works whether or not the lead has ever been through enrichment: if there's no `enriched_contacts` row yet, one is created with just the name; if one exists, it's updated in place (no duplicates). Same rep-scoping rules as flags/notes.
+- `GET /api/leads` now accepts `state`, `visited`, `has_solar`, `no_further_attempt` as additional filters, on top of the existing `territory_id`, `disposition`, `status`, `unassigned`. `state` matches case-insensitively; the three flags are `true`/omit (checking a box narrows to only that flag, unchecked shows both).
+- Admin UI: name is editable inline from the contact card (click "Edit" next to the name); the Leads page toolbar has a state text filter plus the three checkboxes.
+- Employee UI: name is editable the same way from the stop detail screen's contact card. The route view screen has the same state filter + three checkboxes, filtering the current route's stop list client-side (no extra API calls needed since a route's stops are already fully loaded).
+
+## CRM integration (webhooks + API keys)
+
+The general-purpose integration layer — connect to any CRM via Zapier/Make, or a custom script, without a native per-CRM integration.
+
+**API keys** — `POST /api/integrations/api-keys` (admin/manager) creates a key; the raw value is shown exactly once and only a hash is stored afterward. External tools authenticate with an `X-API-Key` header against `/api/external/leads`:
+- `GET /api/external/leads` — list leads (filters: `disposition`, `since`)
+- `POST /api/external/leads` — create a lead (`address` required; `owner_name`/`phone`/`email` populate an `enriched_contacts` row alongside it)
+
+**Webhooks** — `POST /api/integrations/webhooks` registers a URL; RouteHive fires a signed `POST` to it whenever a lead's disposition changes (currently the only event type — `lead.disposition_changed`). Payloads are HMAC-SHA256 signed with the endpoint's own secret, delivered in an `X-RouteHive-Signature` header, same pattern as Stripe/GitHub webhooks. Verified end to end with a real local receiver during development — signature, payload shape, and delivery all confirmed working.
+
+**Known limitations:**
+- No retry queue or delivery log — a failed delivery is logged server-side and dropped, not retried. Worth adding a `webhook_deliveries` table with backoff if a customer's CRM sync silently failing becomes a real risk.
+- Only one event type exists right now. The schema has an `event_types` column on `webhook_endpoints` for future filtering, but every active webhook currently receives everything.
+- Native Salesforce/HubSpot integrations (OAuth, object mapping) are a separate, larger build — this is the "connect anything via Zapier" foundation layer, not a replacement for those.
+
+Admin UI: **Integrations** page (sidebar nav) manages both API keys and webhooks.
+
+## BusyBee AI Assistant
+
+A branded AI copilot, currently one capability: a short pre-visit brief generated from a lead's history right before a rep knocks. Calls the Claude API server-side — `GET /api/leads/:id/brief` (same rep-access scoping as the rest of the contact card).
+
+**Setup:** set `ANTHROPIC_API_KEY` in your environment. Optionally set `ANTHROPIC_MODEL` to override the default (`claude-haiku-4-5-20251001` — fast and cheap, appropriate for a short summarization task; swap in a Sonnet-tier model if you want deeper analysis at higher cost).
+
+**Honest limitation:** the request is built to match the documented Claude Messages API shape, but it's **untested against the live API** — this build environment has no Anthropic API key available to actually invoke it. Verify it works once you've set a real key; if the request shape is ever wrong, it fails closed (returns a clear error) rather than crashing anything else.
+
+Admin UI: "Ask BusyBee" button in the contact card modal, above the notes section. Employee UI: same panel on the stop detail screen, above the check-in/outcome section — the point where a rep actually needs it, right before the door.
+
+**Message drafting (email/text) — handoff, not sending:** BusyBee can also draft a follow-up email or text for a specific lead (`GET /api/leads/:id/draft?channel=email|text`), which the rep can edit in the app, then tap "Open in Mail" / "Open in Messages" to launch their phone's native app with the draft pre-filled — `src/lib/messaging.js` (both apps) builds a `mailto:`/`sms:` link, platform-detected the same way the maps "Navigate" handoff already works. **Nothing is ever sent automatically** — the native app opens with a draft, and a human has to review and press send themselves in their own app. This is deliberately consistent with the existing compliance stance elsewhere in this README (phone/email are reference-only, no automated dialer/SMS/email sender) — a handoff link is not an automated send.
+- Draft buttons are disabled with a reason shown if the lead has no email/phone on file.
+- **Tapping "Open in Mail" / "Open in Messages" also saves the drafted message as a note on the lead**, prefixed `[BusyBee]` and labeled "opened in Mail" / "opened in Messages" — not "sent," since there's no way to confirm the rep actually pressed send afterward in their own native app. Verified end to end against Postgres: the note saves with the correct label, full message body, and shows up properly attributed in the lead's note history. If the note-save call fails for any reason, it fails silently rather than blocking the native app from opening — the rep's actual task (getting the message out) isn't held hostage by a logging failure.
+- Verified: validation (missing email/phone, invalid channel), rep access scoping, and the platform-detection logic for the `sms:`/`mailto:` URLs (tested against mocked iOS/Android/desktop user agents — all produced correct URLs). The live Claude API call for generating the draft text itself carries the same untested-in-this-environment caveat as the pre-visit brief above.
+
+**Bug found and fixed while testing this:** `enriched_contacts` had no database-level guarantee of one row per lead. The app's own code paths always checked-then-updated-or-inserted, so this never surfaced in normal use — but a migration (`20260823000002_enriched_contacts_unique.js`) now adds a proper unique constraint, with cleanup logic that keeps the most-recently-updated row if any duplicates already exist in your database. Verified against a real duplicate-data scenario during testing — cleanup correctly kept the right row, and the constraint now blocks any future duplicate.
+
+The mascot logo (`busybee-*.png` in both apps' `public/` folders) was generated programmatically to match RouteHive's hex-badge/ink/amber visual system, not hand-illustrated — a reasonable placeholder, worth commissioning real artwork for if BusyBee becomes a bigger part of the product.
+
 ## Automated route building
 
 Two ways to build a route now, beyond manually picking stops and order:

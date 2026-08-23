@@ -36,7 +36,10 @@ export const api = {
   },
 
   getLead: (id) => request(`/api/leads/${id}`),
+  getLeadBrief: (id) => request(`/api/leads/${id}/brief`),
+  getLeadDraft: (id, channel) => request(`/api/leads/${id}/draft?channel=${channel}`),
   updateLeadFlags: (id, flags) => request(`/api/leads/${id}/flags`, { method: 'PATCH', body: JSON.stringify(flags) }),
+  updateLeadName: (id, full_name) => request(`/api/leads/${id}/name`, { method: 'PATCH', body: JSON.stringify({ full_name }) }),
   addLeadNote: (id, body) => request(`/api/leads/${id}/notes`, { method: 'POST', body: JSON.stringify({ body }) }),
 
   getRoutes: (params = {}) => {
@@ -53,9 +56,44 @@ export const api = {
 
   getUsers: (role) => request(`/api/users${role ? `?role=${role}` : ''}`),
   createUser: (payload) => request('/api/users', { method: 'POST', body: JSON.stringify(payload) }),
+  updateUser: (id, payload) => request(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+
+  exportLeadsCsv: async () => {
+    const token = getToken();
+    const res = await fetch(`${API_URL}/api/leads/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Export failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `routehive-leads-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+  importNotes: (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request('/api/leads/import-notes', { method: 'POST', body: form });
+  },
 
   getTerritories: () => request('/api/territories'),
-  createTerritory: (payload) => request('/api/territories', { method: 'POST', body: JSON.stringify(payload) })
+  createTerritory: (payload) => request('/api/territories', { method: 'POST', body: JSON.stringify(payload) }),
+
+  getApiKeys: () => request('/api/integrations/api-keys'),
+  createApiKey: (name) => request('/api/integrations/api-keys', { method: 'POST', body: JSON.stringify({ name }) }),
+  revokeApiKey: (id) => request(`/api/integrations/api-keys/${id}/revoke`, { method: 'PATCH' }),
+
+  getWebhooks: () => request('/api/integrations/webhooks'),
+  createWebhook: (url) => request('/api/integrations/webhooks', { method: 'POST', body: JSON.stringify({ url }) }),
+  toggleWebhook: (id) => request(`/api/integrations/webhooks/${id}/toggle`, { method: 'PATCH' }),
+  deleteWebhook: (id) => request(`/api/integrations/webhooks/${id}`, { method: 'DELETE' })
 };
 
 export { getToken };

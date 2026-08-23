@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { triggerWebhook } = require('../lib/webhooks');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -57,6 +58,36 @@ router.patch('/:id/outcome', async (req, res) => {
   const newDisposition = dispositionMap[outcome];
   if (newDisposition) {
     await db('leads').where({ id: stop.lead_id }).update({ disposition: newDisposition });
+
+    // Fire-and-forget - doesn't block the response to the rep even if the
+    // tenant's webhook endpoint is slow or down.
+    const leadForWebhook = await db('leads')
+      .where({ 'leads.id': stop.lead_id })
+      .join('raw_leads', 'leads.raw_lead_id', 'raw_leads.id')
+      .leftJoin('enriched_contacts', 'enriched_contacts.raw_lead_id', 'raw_leads.id')
+      .select(
+        'leads.id',
+        'raw_leads.address',
+        'raw_leads.city',
+        'raw_leads.state',
+        'raw_leads.zip',
+        'enriched_contacts.full_name',
+        'enriched_contacts.phone',
+        'enriched_contacts.email'
+      )
+      .first();
+
+    triggerWebhook(stop.tenant_id, 'lead.disposition_changed', {
+      lead_id: stop.lead_id,
+      disposition: newDisposition,
+      address: leadForWebhook?.address,
+      city: leadForWebhook?.city,
+      state: leadForWebhook?.state,
+      zip: leadForWebhook?.zip,
+      full_name: leadForWebhook?.full_name,
+      phone: leadForWebhook?.phone,
+      email: leadForWebhook?.email
+    });
   }
 
   res.json({ id: stop.id, outcome, updated: true });

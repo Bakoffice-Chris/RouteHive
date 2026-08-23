@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import Layout from '../components/Layout.jsx';
+import EditUserModal from '../components/EditUserModal.jsx';
+import TeamLocationsMap from '../components/TeamLocationsMap.jsx';
 import { api } from '../api.js';
 
 export default function Team() {
@@ -8,6 +10,7 @@ export default function Team() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'rep' });
   const [creating, setCreating] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
 
   async function load() {
     try {
@@ -82,6 +85,11 @@ export default function Team() {
         </div>
       )}
 
+      <h3 style={{ marginBottom: 10 }}>Live locations</h3>
+      <div className="card" style={{ padding: 8, marginBottom: 24 }}>
+        <TeamLocationsMap users={users} />
+      </div>
+
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <table className="data-table">
           <thead>
@@ -89,6 +97,8 @@ export default function Team() {
               <th>Name</th>
               <th>Email</th>
               <th>Role</th>
+              <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -97,11 +107,23 @@ export default function Team() {
                 <td style={{ fontWeight: 600 }}>{u.name}</td>
                 <td className="mono" style={{ fontSize: 13 }}>{u.email}</td>
                 <td><span className="tag tag-neutral">{u.role}</span></td>
+                <td>
+                  <span className={`tag ${u.active === false ? 'tag-red' : 'tag-green'}`}>
+                    {u.active === false ? 'Deactivated' : 'Active'}
+                  </span>
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setEditingUser(u)}>Edit</button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {editingUser && (
+        <EditUserModal user={editingUser} onClose={() => setEditingUser(null)} onSaved={load} />
+      )}
     </Layout>
   );
 }

@@ -8,6 +8,7 @@ import NewRoute from './pages/NewRoute.jsx';
 import BuildOptimizedRoute from './pages/BuildOptimizedRoute.jsx';
 import RouteDetail from './pages/RouteDetail.jsx';
 import Team from './pages/Team.jsx';
+import Integrations from './pages/Integrations.jsx';
 
 function RequireAuth({ children }) {
   const { user } = useAuth();
@@ -25,6 +26,7 @@ function AppRoutes() {
       <Route path="/routes/build-optimized" element={<RequireAuth><BuildOptimizedRoute /></RequireAuth>} />
       <Route path="/routes/:id" element={<RequireAuth><RouteDetail /></RequireAuth>} />
       <Route path="/team" element={<RequireAuth><Team /></RequireAuth>} />
+      <Route path="/integrations" element={<RequireAuth><Integrations /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/leads" replace />} />
     </RouterRoutes>
   );

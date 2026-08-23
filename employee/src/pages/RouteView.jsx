@@ -18,6 +18,10 @@ export default function RouteView() {
   const navigate = useNavigate();
   const [route, setRoute] = useState(null);
   const [error, setError] = useState(null);
+  const [stateFilter, setStateFilter] = useState('');
+  const [visitedFilter, setVisitedFilter] = useState(false);
+  const [hasSolarFilter, setHasSolarFilter] = useState(false);
+  const [noFurtherAttemptFilter, setNoFurtherAttemptFilter] = useState(false);
 
   useEffect(() => {
     api
@@ -27,6 +31,14 @@ export default function RouteView() {
   }, [id]);
 
   const doneCount = route?.stops.filter((s) => s.visited_at).length || 0;
+
+  const visibleStops = (route?.stops || []).filter((stop) => {
+    if (stateFilter.trim() && (stop.state || '').toUpperCase() !== stateFilter.trim().toUpperCase()) return false;
+    if (visitedFilter && !stop.visited) return false;
+    if (hasSolarFilter && !stop.has_solar) return false;
+    if (noFurtherAttemptFilter && !stop.no_further_attempt) return false;
+    return true;
+  });
 
   return (
     <div className="app-shell">
@@ -48,7 +60,36 @@ export default function RouteView() {
               <RouteMap stops={route.stops} />
             </div>
 
-            {route.stops.map((stop) => (
+            <div className="card" style={{ marginBottom: 16, padding: 12 }}>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                <input
+                  value={stateFilter}
+                  onChange={(e) => setStateFilter(e.target.value)}
+                  placeholder="State (e.g. AZ)"
+                  maxLength={2}
+                  style={{ flex: 1, padding: '9px 10px', border: '1px solid var(--line)', borderRadius: 4, textTransform: 'uppercase', fontSize: 13 }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                  <input type="checkbox" checked={visitedFilter} onChange={(e) => setVisitedFilter(e.target.checked)} />
+                  Visited
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                  <input type="checkbox" checked={hasSolarFilter} onChange={(e) => setHasSolarFilter(e.target.checked)} />
+                  Has solar
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                  <input type="checkbox" checked={noFurtherAttemptFilter} onChange={(e) => setNoFurtherAttemptFilter(e.target.checked)} />
+                  No further attempt
+                </label>
+              </div>
+            </div>
+
+            {visibleStops.length === 0 ? (
+              <div className="empty-state">No stops match these filters.</div>
+            ) : (
+              visibleStops.map((stop) => (
               <div
                 key={stop.id}
                 className={`stop-card ${stop.visited_at ? 'done' : ''}`}
@@ -76,7 +117,8 @@ export default function RouteView() {
                   </a>
                 )}
               </div>
-            ))}
+            ))
+            )}
           </>
         )}
       </div>

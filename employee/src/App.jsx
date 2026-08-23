@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth.jsx';
+import { LocationProvider } from './locationSharing.jsx';
 import Login from './pages/Login.jsx';
 import MyRoutes from './pages/MyRoutes.jsx';
 import RouteView from './pages/RouteView.jsx';
@@ -27,7 +28,9 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppRoutes />
+      <LocationProvider>
+        <AppRoutes />
+      </LocationProvider>
     </AuthProvider>
   );
 }

@@ -8,6 +8,8 @@ const routeRoutes = require('./routes/routes');
 const stopRoutes = require('./routes/stops');
 const territoryRoutes = require('./routes/territories');
 const userRoutes = require('./routes/users');
+const integrationRoutes = require('./routes/integrations');
+const externalRoutes = require('./routes/external');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +25,8 @@ app.use('/api/routes', routeRoutes);
 app.use('/api/stops', stopRoutes);
 app.use('/api/territories', territoryRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/integrations', integrationRoutes);
+app.use('/api/external', externalRoutes);
 
 // Basic error handler - keeps stack traces out of API responses
 app.use((err, req, res, next) => {

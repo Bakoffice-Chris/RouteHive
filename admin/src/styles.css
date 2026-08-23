@@ -557,3 +557,53 @@ button {
   box-shadow: 0 2px 6px rgba(23,33,43,0.35);
 }
 .leaflet-container { font-family: var(--font-body); }
+
+/* ---------- BusyBee AI panel ---------- */
+
+.busybee-panel {
+  background: rgba(232, 163, 61, 0.06);
+  border: 1px solid rgba(232, 163, 61, 0.35);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin: 16px 0;
+}
+
+.busybee-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.busybee-avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.busybee-name {
+  font-family: var(--font-brand);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.busybee-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.busybee-loading {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 10px;
+  font-style: italic;
+}
+
+.busybee-brief {
+  font-size: 14px;
+  line-height: 1.5;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(232, 163, 61, 0.3);
+}

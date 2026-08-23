@@ -20,14 +20,27 @@ export default function Leads() {
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [importing, setImporting] = useState(false);
+  const [importingNotes, setImportingNotes] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [dispositionFilter, setDispositionFilter] = useState('');
+  const [stateFilter, setStateFilter] = useState('');
+  const [stateFilterDebounced, setStateFilterDebounced] = useState('');
+  const [visitedFilter, setVisitedFilter] = useState(false);
+  const [hasSolarFilter, setHasSolarFilter] = useState(false);
+  const [noFurtherAttemptFilter, setNoFurtherAttemptFilter] = useState(false);
   const [openLeadId, setOpenLeadId] = useState(null);
+  const [notesImportResult, setNotesImportResult] = useState(null);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const params = dispositionFilter ? { disposition: dispositionFilter } : {};
+      const params = {};
+      if (dispositionFilter) params.disposition = dispositionFilter;
+      if (stateFilterDebounced.trim()) params.state = stateFilterDebounced.trim();
+      if (visitedFilter) params.visited = 'true';
+      if (hasSolarFilter) params.has_solar = 'true';
+      if (noFurtherAttemptFilter) params.no_further_attempt = 'true';
       const data = await api.getLeads(params);
       setLeads(data);
     } catch (err) {
@@ -38,9 +51,14 @@ export default function Leads() {
   }
 
   useEffect(() => {
+    const timeout = setTimeout(() => setStateFilterDebounced(stateFilter), 400);
+    return () => clearTimeout(timeout);
+  }, [stateFilter]);
+
+  useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dispositionFilter]);
+  }, [dispositionFilter, stateFilterDebounced, visitedFilter, hasSolarFilter, noFurtherAttemptFilter]);
 
   function toggleSelect(id) {
     setSelected((prev) => {
@@ -67,6 +85,36 @@ export default function Leads() {
     }
   }
 
+  async function handleImportNotes(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImportingNotes(true);
+    setError(null);
+    setNotesImportResult(null);
+    try {
+      const result = await api.importNotes(file);
+      setNotesImportResult(result);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImportingNotes(false);
+      e.target.value = '';
+    }
+  }
+
+  async function handleExport() {
+    setExporting(true);
+    setError(null);
+    try {
+      await api.exportLeadsCsv();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function buildRouteFromSelected() {
     const ids = Array.from(selected);
     navigate('/routes/new', { state: { leadIds: ids } });
@@ -84,11 +132,18 @@ export default function Leads() {
           <h1>Leads</h1>
           <div className="subtitle">{leads.length} in view</div>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
             {importing ? 'Importing…' : 'Import CSV'}
             <input type="file" accept=".csv" onChange={handleImport} disabled={importing} style={{ display: 'none' }} />
           </label>
+          <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
+            {importingNotes ? 'Importing…' : 'Import notes'}
+            <input type="file" accept=".csv" onChange={handleImportNotes} disabled={importingNotes} style={{ display: 'none' }} />
+          </label>
+          <button className="btn btn-ghost btn-sm" onClick={handleExport} disabled={exporting}>
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
           <button className="btn btn-ghost" disabled={selected.size === 0} onClick={buildRouteFromSelected}>
             Manual order ({selected.size})
           </button>
@@ -98,15 +153,47 @@ export default function Leads() {
         </div>
       </div>
 
+      {notesImportResult && (
+        <div className="error-banner" style={{ background: 'rgba(59,133,99,0.08)', borderColor: 'var(--green)', color: 'var(--green)' }}>
+          Imported {notesImportResult.imported} note{notesImportResult.imported === 1 ? '' : 's'}.
+          {notesImportResult.skipped_count > 0 && (
+            <> {notesImportResult.skipped_count} address{notesImportResult.skipped_count === 1 ? '' : 'es'} didn't match any existing lead: {notesImportResult.skipped_addresses.join(', ')}</>
+          )}
+        </div>
+      )}
+
       {error && <div className="error-banner">{error}</div>}
 
-      <div className="toolbar">
+      <div className="toolbar" style={{ flexWrap: 'wrap', gap: 16 }}>
         <select value={dispositionFilter} onChange={(e) => setDispositionFilter(e.target.value)} style={{ padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 3 }}>
           <option value="">All dispositions</option>
           {Object.entries(DISPOSITION_LABELS).map(([key, val]) => (
             <option key={key} value={key}>{val.label}</option>
           ))}
         </select>
+
+        <input
+          value={stateFilter}
+          onChange={(e) => setStateFilter(e.target.value)}
+          placeholder="State (e.g. AZ)"
+          maxLength={2}
+          style={{ width: 100, padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 3, textTransform: 'uppercase' }}
+        />
+
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <input type="checkbox" checked={visitedFilter} onChange={(e) => setVisitedFilter(e.target.checked)} />
+            Visited
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <input type="checkbox" checked={hasSolarFilter} onChange={(e) => setHasSolarFilter(e.target.checked)} />
+            Has solar
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <input type="checkbox" checked={noFurtherAttemptFilter} onChange={(e) => setNoFurtherAttemptFilter(e.target.checked)} />
+            No further attempt
+          </label>
+        </div>
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
