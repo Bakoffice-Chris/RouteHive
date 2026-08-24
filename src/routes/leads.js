@@ -517,6 +517,31 @@ router.patch('/:id/assign', requireRole('admin', 'manager'), async (req, res) =>
   res.json(updated);
 });
 
+// --- Bulk-remove a set of leads from whatever route(s) they're currently
+// on. Deletes the route_stops rows for these leads (not the routes
+// themselves, and not the leads themselves) - once removed, a lead's
+// "assigned" owner automatically falls back to its standalone
+// assigned_rep_id (or unassigned), since assignment is derived live from
+// route membership rather than stored independently. Admin/manager only.
+router.post('/bulk-remove-from-route', requireRole('admin', 'manager'), async (req, res) => {
+  const { lead_ids } = req.body;
+  if (!Array.isArray(lead_ids) || lead_ids.length === 0) {
+    return res.status(400).json({ error: 'lead_ids must be a non-empty array' });
+  }
+
+  // Scope to this tenant's own leads only - a lead_id from another tenant
+  // (or a bogus one) is silently ignored rather than erroring, since this
+  // is a bulk action where partial success is expected/fine.
+  const ownLeadIds = await db('leads')
+    .where('tenant_id', req.user.tenant_id)
+    .whereIn('id', lead_ids)
+    .pluck('id');
+
+  const removed = await db('route_stops').whereIn('lead_id', ownLeadIds).delete();
+
+  res.json({ removed, lead_count: ownLeadIds.length });
+});
+
 router.get('/', async (req, res) => {
   const { territory_id, disposition, status, unassigned, state, visited, has_solar, no_further_attempt, sort } = req.query;
 

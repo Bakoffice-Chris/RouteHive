@@ -28,13 +28,12 @@ export default function Leads() {
   const [showAddLead, setShowAddLead] = useState(false);
   const [newLead, setNewLead] = useState({ address: '', city: '', state: '', zip: '', owner_name: '' });
   const [savingLead, setSavingLead] = useState(false);
-  const [stateFilter, setStateFilter] = useState('');
-  const [stateFilterDebounced, setStateFilterDebounced] = useState('');
   const [visitedFilter, setVisitedFilter] = useState(false);
   const [hasSolarFilter, setHasSolarFilter] = useState(false);
   const [noFurtherAttemptFilter, setNoFurtherAttemptFilter] = useState(false);
   const [openLeadId, setOpenLeadId] = useState(null);
   const [notesImportResult, setNotesImportResult] = useState(null);
+  const [bulkRemoving, setBulkRemoving] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -42,7 +41,6 @@ export default function Leads() {
     try {
       const params = {};
       if (dispositionFilter) params.disposition = dispositionFilter;
-      if (stateFilterDebounced.trim()) params.state = stateFilterDebounced.trim();
       if (visitedFilter) params.visited = 'true';
       if (hasSolarFilter) params.has_solar = 'true';
       if (noFurtherAttemptFilter) params.no_further_attempt = 'true';
@@ -57,14 +55,9 @@ export default function Leads() {
   }
 
   useEffect(() => {
-    const timeout = setTimeout(() => setStateFilterDebounced(stateFilter), 400);
-    return () => clearTimeout(timeout);
-  }, [stateFilter]);
-
-  useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dispositionFilter, stateFilterDebounced, visitedFilter, hasSolarFilter, noFurtherAttemptFilter, sortBySolarFit]);
+  }, [dispositionFilter, visitedFilter, hasSolarFilter, noFurtherAttemptFilter, sortBySolarFit]);
 
   function toggleSelect(id) {
     setSelected((prev) => {
@@ -72,6 +65,29 @@ export default function Leads() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  }
+
+  function toggleSelectAll() {
+    setSelected((prev) => {
+      if (prev.size === leads.length && leads.length > 0) return new Set();
+      return new Set(leads.map((l) => l.id));
+    });
+  }
+
+  async function handleRemoveFromRoute() {
+    if (selected.size === 0) return;
+    if (!confirm(`Remove ${selected.size} lead(s) from their current route(s)? This doesn't delete the leads or the routes, just the association.`)) return;
+    setBulkRemoving(true);
+    setError(null);
+    try {
+      await api.removeLeadsFromRoute([...selected]);
+      setSelected(new Set());
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBulkRemoving(false);
+    }
   }
 
   async function handleImport(e) {
@@ -173,6 +189,9 @@ export default function Leads() {
           <button className="btn btn-ghost" disabled={selected.size === 0} onClick={buildRouteFromSelected}>
             Manual order ({selected.size})
           </button>
+          <button className="btn btn-ghost" disabled={selected.size === 0 || bulkRemoving} onClick={handleRemoveFromRoute} style={{ color: selected.size > 0 ? 'var(--red)' : undefined, borderColor: selected.size > 0 ? 'var(--red)' : undefined }}>
+            {bulkRemoving ? 'Removing…' : `Remove from route (${selected.size})`}
+          </button>
           <button className="btn btn-amber" disabled={selected.size === 0} onClick={buildOptimizedFromSelected}>
             Build optimized ({selected.size})
           </button>
@@ -231,14 +250,6 @@ export default function Leads() {
           ))}
         </select>
 
-        <input
-          value={stateFilter}
-          onChange={(e) => setStateFilter(e.target.value)}
-          placeholder="State (e.g. AZ)"
-          maxLength={2}
-          style={{ width: 100, padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 3, textTransform: 'uppercase' }}
-        />
-
         <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
             <input type="checkbox" checked={visitedFilter} onChange={(e) => setVisitedFilter(e.target.checked)} />
@@ -273,7 +284,14 @@ export default function Leads() {
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{ width: 32 }}></th>
+                <th style={{ width: 32 }}>
+                  <input
+                    type="checkbox"
+                    checked={leads.length > 0 && selected.size === leads.length}
+                    onChange={toggleSelectAll}
+                    aria-label="Select all"
+                  />
+                </th>
                 <th>Address</th>
                 <th>Name</th>
                 <th>Contact</th>

@@ -33,6 +33,8 @@ export const api = {
   getLeadPropertyDetails: (id) => request(`/api/leads/${id}/property-details`),
   createLead: (payload) => request('/api/leads', { method: 'POST', body: JSON.stringify(payload) }),
   getSeniors: () => request('/api/users/seniors'),
+  getAvailableSeniors: (scheduledAt, durationMinutes) =>
+    request(`/api/appointments/available-seniors?scheduled_at=${encodeURIComponent(scheduledAt)}&duration_minutes=${durationMinutes || 30}`),
 
   getAppointments: (params = {}) => {
     const qs = new URLSearchParams(params).toString();

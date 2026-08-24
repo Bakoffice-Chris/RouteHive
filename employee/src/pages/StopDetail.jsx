@@ -20,6 +20,9 @@ export default function StopDetail() {
   const [showApptForm, setShowApptForm] = useState(false);
   const [apptDate, setApptDate] = useState('');
   const [apptNotes, setApptNotes] = useState('');
+  const [seniorOptions, setSeniorOptions] = useState([]);
+  const [checkingSeniors, setCheckingSeniors] = useState(false);
+  const [selectedSeniorId, setSelectedSeniorId] = useState('');
   const [savingAppt, setSavingAppt] = useState(false);
   const [apptResult, setApptResult] = useState(null);
   const [bookingLink, setBookingLink] = useState(null);
@@ -174,16 +177,34 @@ export default function StopDetail() {
       const appt = await api.createAppointment({
         lead_id: lead.id,
         scheduled_at: new Date(apptDate).toISOString(),
-        notes: apptNotes || undefined
+        notes: apptNotes || undefined,
+        senior_id: selectedSeniorId || undefined
       });
       setApptResult(appt);
       setShowApptForm(false);
       setApptDate('');
       setApptNotes('');
+      setSeniorOptions([]);
+      setSelectedSeniorId('');
     } catch (err) {
       setError(err.message);
     } finally {
       setSavingAppt(false);
+    }
+  }
+
+  async function checkSeniorAvailability() {
+    if (!apptDate) return;
+    setCheckingSeniors(true);
+    setSeniorOptions([]);
+    setSelectedSeniorId('');
+    try {
+      const options = await api.getAvailableSeniors(new Date(apptDate).toISOString(), 30);
+      setSeniorOptions(options);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setCheckingSeniors(false);
     }
   }
 
@@ -330,7 +351,16 @@ export default function StopDetail() {
                 <form onSubmit={bookAppointment}>
                   <div className="field">
                     <label>Date &amp; time</label>
-                    <input type="datetime-local" value={apptDate} onChange={(e) => setApptDate(e.target.value)} required />
+                    <input
+                      type="datetime-local"
+                      value={apptDate}
+                      onChange={(e) => {
+                        setApptDate(e.target.value);
+                        setSeniorOptions([]);
+                        setSelectedSeniorId('');
+                      }}
+                      required
+                    />
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
                     Must be within the next 3.5 business days.
@@ -339,6 +369,30 @@ export default function StopDetail() {
                     <label>Notes (optional)</label>
                     <input value={apptNotes} onChange={(e) => setApptNotes(e.target.value)} placeholder="e.g. wants to see financing options" />
                   </div>
+
+                  <div className="field">
+                    <label>Invite a Senior (optional — for closing meetings)</label>
+                    {seniorOptions.length === 0 ? (
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={checkSeniorAvailability}
+                        disabled={!apptDate || checkingSeniors}
+                      >
+                        {checkingSeniors ? 'Checking…' : 'Check Senior availability'}
+                      </button>
+                    ) : (
+                      <select value={selectedSeniorId} onChange={(e) => setSelectedSeniorId(e.target.value)}>
+                        <option value="">None</option>
+                        {seniorOptions.map((s) => (
+                          <option key={s.id} value={s.id} disabled={!s.available}>
+                            {s.name} {s.available ? '(available)' : '(busy at this time)'}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
                   <div className="btn-row">
                     <button className="btn btn-amber" type="submit" disabled={savingAppt || !apptDate}>
                       {savingAppt ? 'Booking…' : 'Book it'}

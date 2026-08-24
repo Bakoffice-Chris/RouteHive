@@ -30,6 +30,7 @@ export const api = {
     return request(`/api/leads${qs ? `?${qs}` : ''}`);
   },
   createLead: (payload) => request('/api/leads', { method: 'POST', body: JSON.stringify(payload) }),
+  removeLeadsFromRoute: (leadIds) => request('/api/leads/bulk-remove-from-route', { method: 'POST', body: JSON.stringify({ lead_ids: leadIds }) }),
   assignLeadOwner: (id, repId) => request(`/api/leads/${id}/assign`, { method: 'PATCH', body: JSON.stringify({ rep_id: repId }) }),
   importCsv: (file) => {
     const form = new FormData();

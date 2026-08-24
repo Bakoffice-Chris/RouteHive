@@ -134,9 +134,17 @@ Opt-in, foreground-only GPS sharing — a rep toggles it on from their own app; 
 ## Editing homeowner names, and filtering leads
 
 - `PATCH /api/leads/:id/contact` — edit contact info on a lead: **name, co-owner name, email, phone.** Same upsert-safe behavior as before (creates an `enriched_contacts` row if the lead was never enriched, updates in place if one exists — no duplicates). Send only the fields you're changing; send an empty string to clear a field. Replaces the old name-only `/name` endpoint entirely.
-- `GET /api/leads` now accepts `state`, `visited`, `has_solar`, `no_further_attempt` as additional filters, on top of the existing `territory_id`, `disposition`, `status`, `unassigned`. `state` matches case-insensitively; the three flags are `true`/omit (checking a box narrows to only that flag, unchecked shows both).
-- Admin UI: name is editable inline from the contact card (click "Edit" next to the name); the Leads page toolbar has a state text filter plus the three checkboxes.
+- `GET /api/leads` accepts `visited`, `has_solar`, `no_further_attempt` as filters, on top of the existing `territory_id`, `disposition`, `status`, `unassigned`. The three flags are `true`/omit (checking a box narrows to only that flag, unchecked shows both). The `state` filter (geographic address state, e.g. "AZ") was removed from the admin Leads page — it was easy to confuse with disposition/outcome filtering and wasn't pulling its weight; the backend query param still exists if you need it for something else, it's just not in the UI anymore.
+- Admin UI: name is editable inline from the contact card (click "Edit" next to the name); the Leads page toolbar has the three checkboxes.
 - Employee UI: name is editable the same way from the stop detail screen's contact card. The route view screen has an **outcome (disposition) dropdown** in place of a literal address-state filter — not `state` in the geographic sense, but which of the six disposition values a lead is currently at (not contacted, contacted, appointment set, sold, not interested, do not contact) — plus the same three checkboxes, filtering the current route's stop list client-side.
+
+## Bulk lead selection and removing leads from a route
+
+`POST /api/leads/bulk-remove-from-route` (admin/manager) — takes an array of `lead_ids`, deletes their `route_stops` rows (removing them from whatever route(s) they're currently on), without touching the routes themselves or the leads themselves. Admin UI: a select-all checkbox in the Leads table header, and a "Remove from route" button next to the existing "Manual order"/"Build optimized" bulk actions.
+
+Tested directly: removed two leads from a shared route in one call, confirmed the route and its remaining data stayed fully intact, and confirmed the empty-array case is rejected with a clear error rather than silently no-op'ing.
+
+One thing worth knowing: after removal, a lead's shown "Assigned" owner doesn't necessarily go blank — it falls back to whatever the standalone `assigned_rep_id` field happens to hold (typically whoever was the route's rep at the time it was assigned, since that gets synced there automatically). This is intentional, not a bug — see "Single-entry lead creation, and lead ownership" below for why that fallback field exists.
 
 ## Single-entry lead creation, and lead ownership
 
@@ -306,6 +314,18 @@ A fourth account tier, added alongside admin/manager/rep. A Senior logs into the
 **A Senior can have their own appointments and availability**, same self-service flow as a rep (My Availability, appointment booking) — a couple of endpoints that only recognized `role: 'rep'` needed widening to also accept `senior` (appointment booking's rep_id validation, availability's target-rep validation). Found this the direct way: tried to book an appointment for a newly created Senior and watched it get rejected before the fix, then confirmed it succeeds after.
 
 **Deliberately unchanged:** Seniors don't show up in the rep-assignment dropdowns used for routes, lead ownership, or ScoutHive imports — those all stay filtered to `role: 'rep'` specifically. A Senior isn't meant to own leads or run a route the way a rep does; their calendar exists for coordination, not for territory work.
+
+## Senior co-booking on appointments
+
+When a rep books an appointment, they can invite a Senior onto the *same* appointment — not a separate one — for a final closing meeting. `appointments.senior_id` (nullable), alongside the existing `rep_id`.
+
+**Checking who's actually free:** `GET /api/appointments/available-seniors?scheduled_at=...&duration_minutes=...` — returns every Senior on the tenant with an `available` flag, computed by checking for any overlapping `scheduled` appointment where they're either the primary rep *or* already co-invited as senior on someone else's. Returns everyone (not just the free ones) with the flag attached, same pattern as ScoutHive's "already in database" tag rather than making busy ones disappear — more informative, and the employee UI grays out/disables picking a busy one rather than hiding them entirely.
+
+**Never trusts the client's availability check at actual booking time** — the same conflict logic re-runs server-side when the appointment is actually created, and returns a 409 if the Senior got booked by someone else in the meantime. Verified directly: booked an appointment with a Senior invited, confirmed a second booking attempt for that same Senior at the same time correctly got rejected, and confirmed the `available-seniors` endpoint correctly flipped to `available: false` for them afterward.
+
+Once co-booked, the appointment shows up for that Senior both in their own "All Rep Appointments" view (they see everything regardless) and when a rep specifically checks that Senior's schedule via the existing Senior Schedule tab — the list-filtering logic now matches on `rep_id` *or* `senior_id`, not just the primary field.
+
+Employee UI: in the "Schedule appointment" form (stop detail screen), a rep who's picked a date/time gets a "Check Senior availability" button — clicking it loads the dropdown described above. Changing the date/time after checking clears the stale options, so a rep can't submit a booking based on an availability check that's no longer accurate for a different time.
 
 ## Date formatting (purchase date, route date)
 

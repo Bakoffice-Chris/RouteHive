@@ -3,10 +3,35 @@ const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { addBusinessDays } = require('../lib/businessDays');
 const { generateReminderMessage } = require('../lib/busybee');
-const { MAX_BUSINESS_DAYS_OUT } = require('../lib/appointmentRules');
+const { MAX_BUSINESS_DAYS_OUT, DEFAULT_APPOINTMENT_DURATION_MINUTES } = require('../lib/appointmentRules');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// --- Checks whether a given Senior already has a scheduled appointment
+// overlapping the proposed time window - either as the primary rep on it,
+// or as a co-booked attendee on someone else's. Used both to list which
+// Seniors are free for a proposed time, and to re-validate server-side at
+// actual booking time (never trust that a client-side "available" check a
+// moment earlier is still true).
+async function seniorHasConflict(tenantId, seniorId, scheduledAt, durationMinutes, excludeAppointmentId) {
+  const start = new Date(scheduledAt).getTime();
+  const end = start + durationMinutes * 60 * 1000;
+
+  let query = db('appointments')
+    .where({ tenant_id: tenantId, status: 'scheduled' })
+    .andWhere(function () {
+      this.where('rep_id', seniorId).orWhere('senior_id', seniorId);
+    });
+  if (excludeAppointmentId) query = query.andWhereNot('id', excludeAppointmentId);
+
+  const candidates = await query.select('scheduled_at', 'duration_minutes');
+  return candidates.some((appt) => {
+    const apptStart = new Date(appt.scheduled_at).getTime();
+    const apptEnd = apptStart + appt.duration_minutes * 60 * 1000;
+    return start < apptEnd && end > apptStart; // standard interval-overlap check
+  });
+}
 
 async function leadIsOnRepRoute(leadId, repId) {
   const match = await db('route_stops')
@@ -22,7 +47,7 @@ async function leadIsOnRepRoute(leadId, repId) {
 // enforced against "now" at creation time and stored as originally_booked_at
 // so a later reschedule can't be used to sneak the date further out.
 router.post('/', async (req, res) => {
-  const { lead_id, rep_id, scheduled_at, duration_minutes, notes } = req.body;
+  const { lead_id, rep_id, scheduled_at, duration_minutes, notes, senior_id } = req.body;
   if (!lead_id || !scheduled_at) {
     return res.status(400).json({ error: 'lead_id and scheduled_at are required' });
   }
@@ -57,14 +82,36 @@ router.post('/', async (req, res) => {
     });
   }
 
+  const finalDuration = duration_minutes || DEFAULT_APPOINTMENT_DURATION_MINUTES;
+
+  // Co-book a Senior onto this same appointment - e.g. a rep inviting a
+  // Senior to a final closing meeting. Re-validates availability
+  // server-side rather than trusting a client-side check from a moment
+  // earlier, same principle as the self-service booking double-booking
+  // protection.
+  let finalSeniorId = null;
+  if (senior_id) {
+    const senior = await db('users').where({ id: senior_id, tenant_id: req.user.tenant_id, role: 'senior' }).first();
+    if (!senior) return res.status(400).json({ error: 'senior_id does not match a Senior on this tenant' });
+    if (senior_id === finalRepId) {
+      return res.status(400).json({ error: 'The Senior cannot be the same person as the appointment owner' });
+    }
+    const conflict = await seniorHasConflict(req.user.tenant_id, senior_id, scheduledDate.toISOString(), finalDuration);
+    if (conflict) {
+      return res.status(409).json({ error: 'That Senior already has an appointment at this time. Pick a different time or Senior.' });
+    }
+    finalSeniorId = senior_id;
+  }
+
   const [appointment] = await db('appointments')
     .insert({
       tenant_id: req.user.tenant_id,
       lead_id,
       rep_id: finalRepId,
+      senior_id: finalSeniorId,
       created_by: req.user.id,
       scheduled_at: scheduledDate.toISOString(),
-      duration_minutes: duration_minutes || 30,
+      duration_minutes: finalDuration,
       notes: notes || null,
       originally_booked_at: now.toISOString()
     })
@@ -77,6 +124,28 @@ router.post('/', async (req, res) => {
 // (optionally filtered to one rep for a focused view) - this same endpoint
 // serves both "my appointments" (employee app) and the manager rollup
 // (admin app), the caller's role determines the scope automatically.
+// --- For a proposed time, which Seniors are actually free? Any
+// authenticated user can call this (reps need it while booking). Returns
+// every Senior on the tenant with an `available` flag rather than
+// silently hiding busy ones - lets the UI show "Sam Senior (busy)" instead
+// of just making them vanish, which is more informative and matches the
+// pattern used elsewhere in this app (e.g. ScoutHive's "already in
+// database" tag rather than hiding rows).
+router.get('/available-seniors', async (req, res) => {
+  const { scheduled_at, duration_minutes } = req.query;
+  if (!scheduled_at) return res.status(400).json({ error: 'scheduled_at is required' });
+
+  const duration = duration_minutes ? parseInt(duration_minutes, 10) : DEFAULT_APPOINTMENT_DURATION_MINUTES;
+  const seniors = await db('users').where({ tenant_id: req.user.tenant_id, role: 'senior', active: true }).select('id', 'name');
+
+  const results = [];
+  for (const senior of seniors) {
+    const conflict = await seniorHasConflict(req.user.tenant_id, senior.id, scheduled_at, duration);
+    results.push({ id: senior.id, name: senior.name, available: !conflict });
+  }
+  res.json(results);
+});
+
 router.get('/', async (req, res) => {
   const { rep_id, status, from, to } = req.query;
 
@@ -86,10 +155,12 @@ router.get('/', async (req, res) => {
     .join('raw_leads', 'leads.raw_lead_id', 'raw_leads.id')
     .leftJoin('enriched_contacts', 'enriched_contacts.raw_lead_id', 'raw_leads.id')
     .join('users', 'appointments.rep_id', 'users.id')
+    .leftJoin('users as senior_user', 'appointments.senior_id', 'senior_user.id')
     .select(
       'appointments.id',
       'appointments.lead_id',
       'appointments.rep_id',
+      'appointments.senior_id',
       'appointments.scheduled_at',
       'appointments.duration_minutes',
       'appointments.notes',
@@ -97,6 +168,7 @@ router.get('/', async (req, res) => {
       'appointments.originally_booked_at',
       'appointments.created_at',
       'users.name as rep_name',
+      'senior_user.name as senior_name',
       'raw_leads.address',
       'raw_leads.city',
       'raw_leads.state',
@@ -118,12 +190,19 @@ router.get('/', async (req, res) => {
       if (!target || target.role !== 'senior') {
         return res.status(403).json({ error: "You can view your own appointments, or a Senior's." });
       }
-      query = query.andWhere('appointments.rep_id', rep_id);
+      // Match either field - a Senior's schedule includes appointments
+      // they're co-booked onto (senior_id), not just ones where they're
+      // the primary rep_id.
+      query = query.andWhere(function () {
+        this.where('appointments.rep_id', rep_id).orWhere('appointments.senior_id', rep_id);
+      });
     } else {
       query = query.andWhere('appointments.rep_id', req.user.id);
     }
   } else if (rep_id) {
-    query = query.andWhere('appointments.rep_id', rep_id);
+    query = query.andWhere(function () {
+      this.where('appointments.rep_id', rep_id).orWhere('appointments.senior_id', rep_id);
+    });
   }
   if (status) query = query.andWhere('appointments.status', status);
   if (from) query = query.andWhere('appointments.scheduled_at', '>=', from);
