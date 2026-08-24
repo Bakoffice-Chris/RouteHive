@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout.jsx';
 import ContactCard from '../components/ContactCard.jsx';
 import { api } from '../api.js';
+import { formatDateOnly } from '../lib/dateFormat.js';
 
 const DISPOSITION_LABELS = {
   not_contacted: { label: 'Not contacted', tag: 'tag-neutral' },
@@ -310,7 +311,7 @@ export default function Leads() {
                         <span style={{ color: 'var(--text-muted)' }}>—</span>
                       )}
                     </td>
-                    <td className="mono" style={{ fontSize: 12 }} onClick={() => setOpenLeadId(lead.id)}>{lead.purchase_date || '—'}</td>
+                    <td className="mono" style={{ fontSize: 12 }} onClick={() => setOpenLeadId(lead.id)}>{formatDateOnly(lead.purchase_date) || '—'}</td>
                     <td onClick={() => setOpenLeadId(lead.id)}>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {lead.visited && <span className="tag tag-green" style={{ padding: '1px 6px' }}>Visited</span>}
@@ -328,7 +329,16 @@ export default function Leads() {
                       )}
                     </td>
                     <td style={{ fontSize: 13 }}>
-                      {lead.assigned_rep_name || <span style={{ color: 'var(--text-muted)' }}>Unassigned</span>}
+                      {lead.assigned_rep_name ? (
+                        <>
+                          {lead.assigned_rep_name}
+                          {lead.assignment_source === 'route' && lead.route_name && (
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>via {lead.route_name}</div>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: 'var(--text-muted)' }}>Unassigned</span>
+                      )}
                     </td>
                     <td onClick={() => setOpenLeadId(lead.id)}>
                       <span className={`tag ${disp.tag}`}>{disp.label}</span>

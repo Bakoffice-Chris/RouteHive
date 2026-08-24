@@ -74,6 +74,7 @@ export default function Team() {
               <label htmlFor="role">Role</label>
               <select id="role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
                 <option value="rep">Rep</option>
+                <option value="senior">Senior</option>
                 <option value="manager">Manager</option>
                 <option value="admin">Admin</option>
               </select>

@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import TopBar from '../components/TopBar.jsx';
 import { api } from '../api.js';
+import { formatDateOnly } from '../lib/dateFormat.js';
+import { useAuth } from '../auth.jsx';
 
 const STATUS_TAG = {
   assigned: 'tag-amber',
@@ -14,6 +16,7 @@ function isToday(dateStr) {
 }
 
 export default function MyRoutes() {
+  const { user } = useAuth();
   const [routes, setRoutes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -41,9 +44,19 @@ export default function MyRoutes() {
         <Link to="/appointments" className="btn btn-outline" style={{ marginBottom: 12, display: 'flex' }}>
           My Appointments
         </Link>
-        <Link to="/availability" className="btn btn-outline" style={{ marginBottom: 20, display: 'flex' }}>
+        <Link to="/availability" className="btn btn-outline" style={{ marginBottom: 12, display: 'flex' }}>
           My Availability
         </Link>
+        {user?.role === 'senior' && (
+          <Link to="/all-appointments" className="btn btn-outline" style={{ marginBottom: 20, display: 'flex' }}>
+            All Rep Appointments
+          </Link>
+        )}
+        {user?.role === 'rep' && (
+          <Link to="/senior-schedule" className="btn btn-outline" style={{ marginBottom: 20, display: 'flex' }}>
+            Senior Schedule
+          </Link>
+        )}
 
         {error && <div className="error-banner">{error}</div>}
 
@@ -58,7 +71,7 @@ export default function MyRoutes() {
                 <div>
                   <div className="route-card-title">{route.name}</div>
                   <div className="route-card-meta">
-                    {isToday(route.date) ? 'TODAY' : route.date}
+                    {isToday(route.date) ? 'TODAY' : formatDateOnly(route.date)}
                   </div>
                 </div>
                 <span className={`tag ${STATUS_TAG[route.status] || 'tag-neutral'}`}>{route.status}</span>

@@ -275,17 +275,23 @@ export default function ContactCard({ leadId, onClose, onChanged }) {
 
             {error && <div className="error-banner">{error}</div>}
 
-            <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Owner:</span>
-              <select
-                value={lead.assigned_rep_id || ''}
-                onChange={(e) => changeOwner(e.target.value)}
-                disabled={savingOwner}
-                style={{ padding: '4px 8px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 13 }}
-              >
-                <option value="">Unassigned</option>
-                {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
+              {lead.assignment_source === 'route' ? (
+                <span style={{ fontSize: 13 }}>
+                  {lead.assigned_rep_name} <span style={{ color: 'var(--text-muted)' }}>(via {lead.route_name} — reassign the route to change this)</span>
+                </span>
+              ) : (
+                <select
+                  value={lead.assigned_rep_id || ''}
+                  onChange={(e) => changeOwner(e.target.value)}
+                  disabled={savingOwner}
+                  style={{ padding: '4px 8px', border: '1px solid var(--line)', borderRadius: 3, fontSize: 13 }}
+                >
+                  <option value="">Unassigned</option>
+                  {reps.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              )}
             </div>
 
             <div className="checkflag-row">

@@ -31,14 +31,17 @@ router.post('/', async (req, res) => {
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
   let finalRepId;
-  if (req.user.role === 'rep') {
+  if (req.user.role === 'rep' || req.user.role === 'senior') {
     finalRepId = req.user.id;
     const allowed = await leadIsOnRepRoute(lead_id, req.user.id);
     if (!allowed) return res.status(403).json({ error: 'Not one of your assigned stops' });
   } else {
     if (!rep_id) return res.status(400).json({ error: 'rep_id is required when booking as a manager/admin' });
-    const rep = await db('users').where({ id: rep_id, tenant_id: req.user.tenant_id, role: 'rep' }).first();
-    if (!rep) return res.status(400).json({ error: 'rep_id does not match a rep on this tenant' });
+    const rep = await db('users')
+      .where({ id: rep_id, tenant_id: req.user.tenant_id })
+      .whereIn('role', ['rep', 'senior'])
+      .first();
+    if (!rep) return res.status(400).json({ error: 'rep_id does not match a rep or Senior on this tenant' });
     finalRepId = rep_id;
   }
 
@@ -103,8 +106,22 @@ router.get('/', async (req, res) => {
       'enriched_contacts.email'
     );
 
+  // A Senior isn't a rep, so with no rep_id filter this already returns
+  // every appointment across every rep - exactly what the "all rep
+  // appointments" view for a Senior needs, no special-casing required.
   if (req.user.role === 'rep') {
-    query = query.andWhere('appointments.rep_id', req.user.id);
+    if (rep_id && rep_id !== req.user.id) {
+      // A rep may look up a SENIOR's appointments specifically - to know
+      // which closing meetings to coordinate around - but not another
+      // rep's, which stays private.
+      const target = await db('users').where({ id: rep_id, tenant_id: req.user.tenant_id }).first();
+      if (!target || target.role !== 'senior') {
+        return res.status(403).json({ error: "You can view your own appointments, or a Senior's." });
+      }
+      query = query.andWhere('appointments.rep_id', rep_id);
+    } else {
+      query = query.andWhere('appointments.rep_id', req.user.id);
+    }
   } else if (rep_id) {
     query = query.andWhere('appointments.rep_id', rep_id);
   }

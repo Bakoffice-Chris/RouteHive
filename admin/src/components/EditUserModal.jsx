@@ -50,6 +50,7 @@ export default function EditUserModal({ user, onClose, onSaved }) {
             <label htmlFor="edit-role">Role</label>
             <select id="edit-role" value={role} onChange={(e) => setRole(e.target.value)}>
               <option value="rep">Rep</option>
+              <option value="senior">Senior</option>
               <option value="manager">Manager</option>
               <option value="admin">Admin</option>
             </select>

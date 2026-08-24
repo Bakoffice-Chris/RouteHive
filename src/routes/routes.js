@@ -7,6 +7,14 @@ const { zipToCentroid, geocodeAddress } = require('../lib/geocoding');
 const router = express.Router();
 router.use(requireAuth);
 
+// Same fix as leads.js - Postgres DATE columns return as JS Date objects,
+// which serialize to a full timestamp if sent through JSON as-is.
+function toDateOnly(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
 // --- Create a route from a manually selected list of lead IDs (MVP path -
 // no auto-optimization yet, manager picks stops and order manually or in
 // whatever order they're passed).
@@ -39,7 +47,7 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
   }));
   await db('route_stops').insert(stopRows);
 
-  res.status(201).json({ ...route, stop_count: stopRows.length });
+  res.status(201).json({ ...route, date: toDateOnly(route.date), stop_count: stopRows.length });
 });
 
 // --- Resolve a "start/end point" input, which can be given as {lat, lng},
@@ -176,6 +184,7 @@ router.post('/build-optimized', requireRole('admin', 'manager'), async (req, res
 
     res.status(201).json({
       ...route,
+      date: toDateOnly(route.date),
       stop_count: stopRows.length,
       skipped_no_coordinates: skippedNoCoords,
       estimated_distance_miles: distanceMiles
@@ -200,7 +209,7 @@ router.get('/', async (req, res) => {
   if (status) query = query.andWhere('status', status);
 
   const routes = await query.orderBy('date', 'desc');
-  res.json(routes);
+  res.json(routes.map((r) => ({ ...r, date: toDateOnly(r.date) })));
 });
 
 // --- Rep's own active route for today (convenience endpoint for the PWA)
@@ -210,7 +219,7 @@ router.get('/me/today', requireRole('rep'), async (req, res) => {
     .where({ tenant_id: req.user.tenant_id, assigned_rep_id: req.user.id, date: today })
     .first();
   if (!route) return res.status(404).json({ error: 'No route assigned for today' });
-  res.json(route);
+  res.json({ ...route, date: toDateOnly(route.date) });
 });
 
 // --- Route detail with ordered stop list + lead info
@@ -251,7 +260,7 @@ router.get('/:id', async (req, res) => {
     )
     .orderBy('route_stops.sequence_number', 'asc');
 
-  res.json({ ...route, stops });
+  res.json({ ...route, date: toDateOnly(route.date), stops });
 });
 
 // --- Edit a route's name, date, or territory. Reassigning the rep happens
@@ -276,7 +285,7 @@ router.patch('/:id', requireRole('admin', 'manager'), async (req, res) => {
 
   await db('routes').where({ id: route.id }).update(updates);
   const updated = await db('routes').where({ id: route.id }).first();
-  res.json(updated);
+  res.json({ ...updated, date: toDateOnly(updated.date) });
 });
 
 // --- Delete a route. Cascades to its route_stops (FK ON DELETE CASCADE),
@@ -345,7 +354,7 @@ router.patch('/:id/assign', requireRole('admin', 'manager'), async (req, res) =>
     details: `Assigned to rep ${rep_id}`
   });
 
-  res.json({ ...route, assigned_rep_id: rep_id, status: 'assigned' });
+  res.json({ ...route, date: toDateOnly(route.date), assigned_rep_id: rep_id, status: 'assigned' });
 });
 
 module.exports = router;

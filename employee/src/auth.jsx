@@ -11,8 +11,8 @@ export function AuthProvider({ children }) {
 
   async function login(email, password) {
     const { token, user } = await api.login(email, password);
-    if (user.role !== 'rep') {
-      throw new Error('This app is for field reps. Managers should use the admin console.');
+    if (user.role !== 'rep' && user.role !== 'senior') {
+      throw new Error('This app is for field reps and Seniors. Managers should use the admin console.');
     }
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));

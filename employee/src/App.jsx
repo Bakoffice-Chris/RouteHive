@@ -9,6 +9,8 @@ import StopDetail from './pages/StopDetail.jsx';
 import MyAppointments from './pages/MyAppointments.jsx';
 import MyAvailability from './pages/MyAvailability.jsx';
 import AddLead from './pages/AddLead.jsx';
+import AllRepAppointments from './pages/AllRepAppointments.jsx';
+import SeniorSchedule from './pages/SeniorSchedule.jsx';
 
 function RequireAuth({ children }) {
   const { user } = useAuth();
@@ -26,6 +28,8 @@ function AppRoutes() {
       <Route path="/appointments" element={<RequireAuth><MyAppointments /></RequireAuth>} />
       <Route path="/availability" element={<RequireAuth><MyAvailability /></RequireAuth>} />
       <Route path="/add-lead" element={<RequireAuth><AddLead /></RequireAuth>} />
+      <Route path="/all-appointments" element={<RequireAuth><AllRepAppointments /></RequireAuth>} />
+      <Route path="/senior-schedule" element={<RequireAuth><SeniorSchedule /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/routes" replace />} />
     </Routes>
   );

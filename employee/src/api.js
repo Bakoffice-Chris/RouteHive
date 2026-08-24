@@ -32,6 +32,7 @@ export const api = {
   getLeadEstimatedValue: (id) => request(`/api/leads/${id}/estimated-value`),
   getLeadPropertyDetails: (id) => request(`/api/leads/${id}/property-details`),
   createLead: (payload) => request('/api/leads', { method: 'POST', body: JSON.stringify(payload) }),
+  getSeniors: () => request('/api/users/seniors'),
 
   getAppointments: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
@@ -41,7 +42,7 @@ export const api = {
   updateAppointment: (id, payload) => request(`/api/appointments/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   getAppointmentReminder: (id, type, channel) => request(`/api/appointments/${id}/reminder?type=${type}&channel=${channel}`),
 
-  getAvailability: () => request('/api/availability'),
+  getAvailability: (repId) => request(`/api/availability${repId ? `?rep_id=${repId}` : ''}`),
   addAvailability: (payload) => request('/api/availability', { method: 'POST', body: JSON.stringify(payload) }),
   deleteAvailability: (id) => request(`/api/availability/${id}`, { method: 'DELETE' }),
   createBookingLink: (leadId) => request(`/api/leads/${leadId}/booking-link`, { method: 'POST' }),

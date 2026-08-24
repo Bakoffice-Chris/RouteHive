@@ -6,6 +6,17 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const router = express.Router();
 router.use(requireAuth);
 
+// --- Any authenticated user can look up who the Senior(s) are - reps need
+// this to find who to coordinate closing meetings with. Kept minimal
+// (id + name only, no email/territory/etc.) since this is deliberately
+// more open than the full user list, which stays admin/manager-only.
+router.get('/seniors', async (req, res) => {
+  const seniors = await db('users')
+    .where({ tenant_id: req.user.tenant_id, role: 'senior', active: true })
+    .select('id', 'name');
+  res.json(seniors);
+});
+
 // --- List users on this tenant (e.g. to populate a rep-assignment dropdown)
 router.get('/', requireRole('admin', 'manager'), async (req, res) => {
   const { role } = req.query;
@@ -34,8 +45,8 @@ router.post('/', requireRole('admin', 'manager'), async (req, res) => {
   if (!name || !email || !password || !role) {
     return res.status(400).json({ error: 'name, email, password, and role are required' });
   }
-  if (!['admin', 'manager', 'rep'].includes(role)) {
-    return res.status(400).json({ error: 'role must be admin, manager, or rep' });
+  if (!['admin', 'manager', 'rep', 'senior'].includes(role)) {
+    return res.status(400).json({ error: 'role must be admin, manager, rep, or senior' });
   }
 
   const existing = await db('users').where({ email }).first();
@@ -76,8 +87,8 @@ router.patch('/:id', requireRole('admin', 'manager'), async (req, res) => {
   }
 
   if (role !== undefined) {
-    if (!['admin', 'manager', 'rep'].includes(role)) {
-      return res.status(400).json({ error: 'role must be admin, manager, or rep' });
+    if (!['admin', 'manager', 'rep', 'senior'].includes(role)) {
+      return res.status(400).json({ error: 'role must be admin, manager, rep, or senior' });
     }
     updates.role = role;
   }

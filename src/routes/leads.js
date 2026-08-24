@@ -16,6 +16,17 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 router.use(requireAuth);
 
+// Postgres returns DATE columns as JS Date objects, which serialize to a
+// full ISO timestamp ("...T00:00:00.000Z") if sent through JSON.stringify
+// as-is - purchase_date is a calendar date with no meaningful time
+// component, so this strips it down to a clean date-only string wherever
+// it's returned from the API.
+function toDateOnly(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
 // --- CSV import: the MVP data path, per the build order in the spec.
 // Expected columns: address,city,state,zip,purchase_date,sale_price,owner_name,lat,lng
 // lat/lng, sale_price, owner_name are optional.
@@ -433,13 +444,58 @@ router.post('/', async (req, res) => {
     });
   }
 
-  res.status(201).json({ id: lead.id, address: rawLead.address, disposition: lead.disposition, assigned_rep_id: assignedRepId });
+  // If a rep added this, drop it onto one of their own active routes
+  // automatically - "assigned to a rep" should mean it's actually on
+  // something they're working, not just a label with no route behind it.
+  // Prefers today's route if the rep has one; otherwise their soonest
+  // upcoming scheduled/in-progress route. If they have no active route at
+  // all right now, the lead still gets assigned_rep_id set above, but
+  // stays off any route until one exists - reported back in the response
+  // so the rep/UI knows which happened.
+  let addedToRoute = null;
+  if (req.user.role === 'rep') {
+    const today = new Date().toISOString().slice(0, 10);
+    let targetRoute = await db('routes')
+      .where({ tenant_id: req.user.tenant_id, assigned_rep_id: req.user.id, date: today })
+      .whereIn('status', ['assigned', 'in_progress'])
+      .first();
+
+    if (!targetRoute) {
+      targetRoute = await db('routes')
+        .where({ tenant_id: req.user.tenant_id, assigned_rep_id: req.user.id })
+        .whereIn('status', ['assigned', 'in_progress'])
+        .andWhere('date', '>=', today)
+        .orderBy('date', 'asc')
+        .first();
+    }
+
+    if (targetRoute) {
+      const maxSeq = await db('route_stops').where({ route_id: targetRoute.id }).max('sequence_number as max').first();
+      await db('route_stops').insert({
+        route_id: targetRoute.id,
+        lead_id: lead.id,
+        sequence_number: (maxSeq.max || 0) + 1
+      });
+      addedToRoute = { id: targetRoute.id, name: targetRoute.name, date: toDateOnly(targetRoute.date) };
+    }
+  }
+
+  res.status(201).json({
+    id: lead.id,
+    address: rawLead.address,
+    disposition: lead.disposition,
+    assigned_rep_id: assignedRepId,
+    added_to_route: addedToRoute
+  });
 });
 
-// --- View or change a lead's owner (the rep currently assigned to it,
-// independent of route membership). Admin/manager only - reassigning
-// ownership is a manager-level decision, unlike creating a lead which any
-// role can do. Send { rep_id: null } to remove the owner entirely.
+
+// --- Directly set or clear a lead's owner when it's NOT currently on any
+// route. This is the pre-route fallback only - once a lead is on an active
+// route, "assigned" is derived from that route's rep (see GET / and GET
+// /:id above) and this field becomes invisible until the lead comes off
+// every route. To change who's working a routed lead, reassign the route
+// itself. Admin/manager only. Send { rep_id: null } to clear.
 router.patch('/:id/assign', requireRole('admin', 'manager'), async (req, res) => {
   const lead = await db('leads').where({ id: req.params.id, tenant_id: req.user.tenant_id }).first();
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
@@ -479,6 +535,25 @@ router.get('/', async (req, res) => {
       'leads.no_further_attempt',
       'leads.assigned_rep_id',
       'owner.name as assigned_rep_name',
+      db.raw(`(
+        SELECT r.assigned_rep_id FROM route_stops rs
+        JOIN routes r ON r.id = rs.route_id
+        WHERE rs.lead_id = leads.id
+        ORDER BY r.date DESC, r.created_at DESC LIMIT 1
+      ) as route_rep_id`),
+      db.raw(`(
+        SELECT u.name FROM route_stops rs
+        JOIN routes r ON r.id = rs.route_id
+        LEFT JOIN users u ON u.id = r.assigned_rep_id
+        WHERE rs.lead_id = leads.id
+        ORDER BY r.date DESC, r.created_at DESC LIMIT 1
+      ) as route_rep_name`),
+      db.raw(`(
+        SELECT r.name FROM route_stops rs
+        JOIN routes r ON r.id = rs.route_id
+        WHERE rs.lead_id = leads.id
+        ORDER BY r.date DESC, r.created_at DESC LIMIT 1
+      ) as route_name`),
       'raw_leads.address',
       'raw_leads.city',
       'raw_leads.state',
@@ -516,18 +591,35 @@ router.get('/', async (req, res) => {
   // independently of the underlying property data - computing on read
   // keeps it always current rather than needing to be recalculated and
   // re-saved every time a flag changes.
-  leads = leads.map((lead) => ({
-    ...lead,
-    solar_fit: computeSolarFitScore({
-      has_pool: lead.has_pool,
-      estimated_value: lead.estimated_value,
-      square_footage: lead.square_footage,
-      year_built: lead.year_built,
-      purchase_date: lead.purchase_date,
-      has_solar: lead.has_solar,
-      no_further_attempt: lead.no_further_attempt
-    })
-  }));
+  //
+  // Assignment: the rep who owns the lead's most recent route is
+  // authoritative when one exists - "assigned" means "whose route this
+  // property is on," not a separately-editable label that can drift from
+  // reality. The standalone leads.assigned_rep_id (set directly via
+  // PATCH /leads/:id/assign, or automatically when a rep creates a lead) is
+  // only shown as a fallback for leads that aren't on any route yet.
+  leads = leads.map((lead) => {
+    const hasRoute = !!lead.route_rep_id || !!lead.route_name;
+    const assignedRepId = lead.route_rep_id || lead.assigned_rep_id || null;
+    const assignedRepName = lead.route_rep_id ? lead.route_rep_name : lead.assigned_rep_name;
+    return {
+      ...lead,
+      purchase_date: toDateOnly(lead.purchase_date),
+      assigned_rep_id: assignedRepId,
+      assigned_rep_name: assignedRepName || null,
+      assignment_source: hasRoute ? 'route' : lead.assigned_rep_id ? 'manual' : null,
+      route_name: lead.route_name || null,
+      solar_fit: computeSolarFitScore({
+        has_pool: lead.has_pool,
+        estimated_value: lead.estimated_value,
+        square_footage: lead.square_footage,
+        year_built: lead.year_built,
+        purchase_date: lead.purchase_date,
+        has_solar: lead.has_solar,
+        no_further_attempt: lead.no_further_attempt
+      })
+    };
+  });
 
   if (sort === 'solar_fit') {
     leads.sort((a, b) => b.solar_fit.score - a.solar_fit.score);
@@ -616,6 +708,25 @@ async function getLeadDetail(req, leadId) {
       'leads.no_further_attempt as no_further_attempt',
       'leads.assigned_rep_id as assigned_rep_id',
       'owner.name as assigned_rep_name',
+      db.raw(`(
+        SELECT r.assigned_rep_id FROM route_stops rs
+        JOIN routes r ON r.id = rs.route_id
+        WHERE rs.lead_id = leads.id
+        ORDER BY r.date DESC, r.created_at DESC LIMIT 1
+      ) as route_rep_id`),
+      db.raw(`(
+        SELECT u.name FROM route_stops rs
+        JOIN routes r ON r.id = rs.route_id
+        LEFT JOIN users u ON u.id = r.assigned_rep_id
+        WHERE rs.lead_id = leads.id
+        ORDER BY r.date DESC, r.created_at DESC LIMIT 1
+      ) as route_rep_name`),
+      db.raw(`(
+        SELECT r.name FROM route_stops rs
+        JOIN routes r ON r.id = rs.route_id
+        WHERE rs.lead_id = leads.id
+        ORDER BY r.date DESC, r.created_at DESC LIMIT 1
+      ) as route_name`),
       'raw_leads.address as address',
       'raw_leads.city as city',
       'raw_leads.state as state',
@@ -657,11 +768,18 @@ async function getLeadDetail(req, leadId) {
     .select('lead_notes.id', 'lead_notes.body', 'lead_notes.created_at', 'users.name as author_name')
     .orderBy('lead_notes.created_at', 'desc');
 
+  const hasRoute = !!lead.route_rep_id || !!lead.route_name;
+
   return {
     ...lead,
     visited: !!lead.visited,
     has_solar: !!lead.has_solar,
     no_further_attempt: !!lead.no_further_attempt,
+    purchase_date: toDateOnly(lead.purchase_date),
+    assigned_rep_id: lead.route_rep_id || lead.assigned_rep_id || null,
+    assigned_rep_name: (lead.route_rep_id ? lead.route_rep_name : lead.assigned_rep_name) || null,
+    assignment_source: hasRoute ? 'route' : lead.assigned_rep_id ? 'manual' : null,
+    route_name: lead.route_name || null,
     solar_fit: computeSolarFitScore({
       has_pool: lead.has_pool,
       estimated_value: lead.estimated_value,

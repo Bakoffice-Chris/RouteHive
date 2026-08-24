@@ -10,19 +10,34 @@ function isValidTime(str) {
 }
 
 async function resolveTargetRepId(req, bodyRepId) {
-  if (req.user.role === 'rep') return req.user.id; // reps can only ever manage their own
+  // Reps and Seniors both self-manage their own hours the same way.
+  if (req.user.role === 'rep' || req.user.role === 'senior') return req.user.id;
   if (!bodyRepId) return null;
-  const rep = await db('users').where({ id: bodyRepId, tenant_id: req.user.tenant_id, role: 'rep' }).first();
-  return rep ? rep.id : null;
+  const target = await db('users')
+    .where({ id: bodyRepId, tenant_id: req.user.tenant_id })
+    .whereIn('role', ['rep', 'senior'])
+    .first();
+  return target ? target.id : null;
 }
 
-// --- List availability windows. Reps see only their own; admin/manager can
-// filter to a specific rep with ?rep_id= or see everyone's.
+// --- List availability windows. Reps/Seniors see only their own by
+// default; a rep may also look up a Senior's hours specifically (to
+// coordinate a closing meeting) via ?rep_id=<seniorId> - but not another
+// rep's, which stays private. Admin/manager can filter to anyone or see
+// everyone's.
 router.get('/', async (req, res) => {
   let query = db('rep_availability').where({ tenant_id: req.user.tenant_id, active: true });
 
-  if (req.user.role === 'rep') {
-    query = query.andWhere('rep_id', req.user.id);
+  if (req.user.role === 'rep' || req.user.role === 'senior') {
+    if (req.query.rep_id && req.query.rep_id !== req.user.id) {
+      const target = await db('users').where({ id: req.query.rep_id, tenant_id: req.user.tenant_id }).first();
+      if (!target || target.role !== 'senior') {
+        return res.status(403).json({ error: "You can view your own availability, or a Senior's." });
+      }
+      query = query.andWhere('rep_id', req.query.rep_id);
+    } else {
+      query = query.andWhere('rep_id', req.user.id);
+    }
   } else if (req.query.rep_id) {
     query = query.andWhere('rep_id', req.query.rep_id);
   }
@@ -59,7 +74,7 @@ router.post('/', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const window = await db('rep_availability').where({ id: req.params.id, tenant_id: req.user.tenant_id }).first();
   if (!window) return res.status(404).json({ error: 'Availability window not found' });
-  if (req.user.role === 'rep' && window.rep_id !== req.user.id) {
+  if ((req.user.role === 'rep' || req.user.role === 'senior') && window.rep_id !== req.user.id) {
     return res.status(403).json({ error: 'Not your availability window' });
   }
 

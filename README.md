@@ -143,12 +143,14 @@ Opt-in, foreground-only GPS sharing — a rep toggles it on from their own app; 
 **Add one lead at a time, no CSV required.** `POST /api/leads` — only `address` is required. Available to admin, manager, *and* rep alike (unlike CSV import and ScoutHive import, which are admin/manager-only) — a rep in the field finding a house that isn't in the system yet doesn't need to go back to a manager to get it added.
 - Admin UI: "Add lead" button on the Leads page, opens an inline form.
 - Employee UI: **Add a Lead** (linked from the My Routes home screen) — its own small page, since the employee app doesn't have a general lead-browsing screen the way admin does.
+- **When a rep adds one, it joins one of their actual routes**, not just a label with nothing behind it: today's active route if they have one, otherwise their soonest upcoming assigned/in-progress route, appended as the next stop. If they have no active route at all right now, the lead is still tagged to them (so it's not orphaned), but stays off any route until one exists — the response includes `added_to_route` (or `null`) so the UI/rep knows which happened. Tested both branches directly against Postgres, including confirming the stop count and sequence number after an auto-join.
 
-**Lead ownership ("owner")** — `leads.assigned_rep_id`, a direct concept of who currently has a lead, independent of route membership (a lead can have an owner without being on an active route right now, and doesn't lose its owner if a route gets deleted).
-- If a **rep** creates a lead via `POST /api/leads`, they become its owner automatically. If a **manager/admin** creates one, it's unassigned unless they pass `rep_id` explicitly.
-- **Auto-synced from route assignment**: assigning a route to a rep (`PATCH /routes/:id/assign`) automatically sets that rep as owner for every lead on the route — verified directly against Postgres. A manager can still override an individual lead's owner afterward without touching the route.
-- `PATCH /api/leads/:id/assign` (admin/manager only) — set or clear (`rep_id: null`) a lead's owner directly, independent of routes.
-- Visible on the Leads list ("Assigned" column) and editable right from the contact card (a dropdown showing every rep + "Unassigned").
+**Lead ownership ("Assigned")** — reflects **the rep who owns the route this lead is currently on**, not a separately-editable label that can drift from where the lead is actually being worked. `leads.assigned_rep_id` still exists, but only as a pre-route fallback:
+- Assigning a route to a rep (`PATCH /routes/:id/assign`) automatically makes that rep the shown owner for every lead on the route.
+- **Verified this wins over manual overrides**: tried clearing a routed lead's ownership via the standalone endpoint, confirmed the display still correctly showed the route's rep afterward — reassigning a routed lead's owner means reassigning the *route*, not editing the lead in isolation.
+- `PATCH /api/leads/:id/assign` (admin/manager only) — only meaningfully changes anything for a lead that **isn't** on any active route yet; the admin UI reflects this (shows a plain "via [Route Name]" note instead of an editable dropdown once a lead is routed).
+- Every lead response includes `assignment_source` (`'route'`, `'manual'`, or `null`) and `route_name`, so the UI never has to guess which kind of assignment it's showing.
+- Visible on the Leads list ("Assigned" column, with a small "via [Route]" note when route-derived).
 
 ## Editing and deleting routes
 
@@ -290,6 +292,26 @@ The public-facing booking flow scoped above is now built. A booking link is tied
 6. Once deployed, hit `POST /api/auth/register-tenant` against your Railway URL to create your first real tenant/admin, the same way you'd have bootstrapped HourHive.
 7. Deploy the admin dashboard and rep PWA as separate Railway services pointing at this API's URL, same two-app pattern as HourHive.
 8. Deploy the `booking/` app the same way — a third frontend service, root directory `booking`, same `VITE_API_URL` pointing at the API. Set `BOOKING_PAGE_URL` on the **API service** to this app's public Railway URL, so generated booking links point at the right place instead of `localhost:5175`.
+
+## Senior role
+
+A fourth account tier, added alongside admin/manager/rep. A Senior logs into the **employee app** like a rep does (not the admin console), but with two-way schedule visibility built for one specific purpose: attending final closing meetings with a rep.
+
+**Adding "senior" to the role field required an actual schema change, not just an app-level check** — `users.role` is a Postgres CHECK constraint (confirmed its exact name, `users_role_check`, against a live database before touching it, since guessing wrong would fail silently different ways depending on knex/pg version). Migration drops and recreates that constraint with `senior` added to the allowed set — verified directly: a `senior` row inserts cleanly, and a nonsense role (`'ceo'`) still gets rejected exactly as before.
+
+**Senior → sees every rep's appointments.** `GET /api/appointments` already returned everything when the caller wasn't a rep (that's how admin/manager rollup worked) — so a Senior gets the same "all appointments" view for free, no new backend logic needed there. New page: **All Rep Appointments**, in the employee app.
+
+**Rep → sees a Senior's appointments and availability specifically, and only that.** This needed real changes: both `GET /api/appointments?rep_id=` and `GET /api/availability?rep_id=` used to hard-lock a rep to their own data no matter what was passed. Now a rep can pass a Senior's ID and see their schedule — verified this is scoped correctly with a real test, not just the trivial case: created a second, genuinely distinct rep account and confirmed a rep gets a clean 403 trying to view *that* rep's availability, while the same request against a Senior's ID succeeds. New page: **Senior Schedule**, in the employee app (picks the Senior automatically if there's only one; a dropdown appears if there are several).
+
+**A Senior can have their own appointments and availability**, same self-service flow as a rep (My Availability, appointment booking) — a couple of endpoints that only recognized `role: 'rep'` needed widening to also accept `senior` (appointment booking's rep_id validation, availability's target-rep validation). Found this the direct way: tried to book an appointment for a newly created Senior and watched it get rejected before the fix, then confirmed it succeeds after.
+
+**Deliberately unchanged:** Seniors don't show up in the rep-assignment dropdowns used for routes, lead ownership, or ScoutHive imports — those all stay filtered to `role: 'rep'` specifically. A Senior isn't meant to own leads or run a route the way a rep does; their calendar exists for coordination, not for territory work.
+
+## Date formatting (purchase date, route date)
+
+Found while fixing this: Postgres `DATE` columns (`raw_leads.purchase_date`, `routes.date`) come back from the driver as JS `Date` objects, which serialize to a full ISO timestamp (`...T00:00:00.000Z`) if returned raw — not just on purchase date, but on every route-date response too (creation, list, detail, edit, assignment). Fixed at the API layer in both `leads.js` and `routes.js` (a shared `toDateOnly` helper, stripping to a clean `YYYY-MM-DD` string), and on the frontend, `formatDateOnly` (in both apps' `src/lib/dateFormat.js`) renders that as `DD/MM/YYYY` everywhere a calendar date shows — Leads, ScoutHive, Routes list, Route detail, My Routes. Deliberately **not** applied to actual timestamps that carry a meaningful time (appointment `scheduled_at`) or to the raw `YYYY-MM-DD` value an `<input type="date">` needs internally.
+
+Verified clean (no `T`/`Z` anywhere) across every response type that touches either field: lead list, lead detail, route creation, route list, route detail, route edit, and route assignment.
 
 ## What's deliberately not built yet
 

@@ -4,6 +4,7 @@ import Layout from '../components/Layout.jsx';
 import ContactCard from '../components/ContactCard.jsx';
 import RouteMap from '../components/RouteMap.jsx';
 import { api } from '../api.js';
+import { formatDateOnly } from '../lib/dateFormat.js';
 
 const OUTCOME_LABEL = {
   no_answer: 'No answer',
@@ -128,7 +129,7 @@ export default function RouteDetail() {
               <div>
                 <h1>{route.name}</h1>
                 <div className="subtitle mono">
-                  {route.date} · {route.stops.length} stops · {route.status}
+                  {formatDateOnly(route.date)} · {route.stops.length} stops · {route.status}
                   {route.build_mode && route.build_mode !== 'manual' && (
                     <> · {route.build_mode === 'radius' ? `${route.radius_miles}mi radius` : 'optimized path'} · ~{route.estimated_distance_miles}mi</>
                   )}

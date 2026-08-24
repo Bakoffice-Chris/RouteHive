@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Layout from '../components/Layout.jsx';
 import { api } from '../api.js';
 import { computeSolarFitScore } from '../lib/solarFit.js';
+import { formatDateOnly } from '../lib/dateFormat.js';
 
 export default function ScoutHive() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -227,7 +228,7 @@ export default function ScoutHive() {
                           </div>
                         </td>
                         <td>{r.owner_name || <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
-                        <td className="mono" style={{ fontSize: 12 }}>{r.purchase_date}</td>
+                        <td className="mono" style={{ fontSize: 12 }}>{formatDateOnly(r.purchase_date)}</td>
                         <td className="mono" style={{ fontSize: 12 }}>{r.sale_price ? `$${Number(r.sale_price).toLocaleString()}` : '—'}</td>
                         <td className="mono" style={{ fontSize: 12 }}>
                           {valuation?.estimated_value ? (

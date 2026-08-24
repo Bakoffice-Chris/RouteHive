@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Layout from '../components/Layout.jsx';
 import { api } from '../api.js';
+import { formatDateOnly } from '../lib/dateFormat.js';
 
 const STATUS_TAG = {
   draft: 'tag-neutral',
@@ -56,7 +57,7 @@ export default function Routes() {
               {routes.map((route) => (
                 <tr key={route.id}>
                   <td style={{ fontWeight: 600 }}>{route.name}</td>
-                  <td className="mono" style={{ fontSize: 12 }}>{route.date}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{formatDateOnly(route.date)}</td>
                   <td>
                     <span className={`tag ${STATUS_TAG[route.status] || 'tag-neutral'}`}>{route.status}</span>
                   </td>
